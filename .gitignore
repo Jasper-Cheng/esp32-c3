@@ -1,0 +1,22 @@
+.vscode/
+.idea/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.log
+*.swp
+*.DS_Store
+
+# Build artifacts
+/build/
+/build*/
+*.bin
+*.elf
+*.map
+
+# Local SDK configs
+/sdkconfig
+/sdkconfig.old
+/sdkconfig.ci
+
