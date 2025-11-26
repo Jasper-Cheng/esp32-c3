@@ -54,13 +54,13 @@ static bool parse_led_data_string(const uint8_t *data, uint16_t len, uint8_t *ou
     return true;
 }
 
-static const uint8_t adv_payload[] = {
+static uint8_t adv_payload[] = {
     0x02, 0x01, 0x06,
     0x08, 0x09, 'E', 'S', 'P', '-', 'L', 'E', 'D',
     0x03, 0x03, 0xFF, 0x00,
 };
 
-static const esp_ble_adv_params_t adv_params = {
+static esp_ble_adv_params_t adv_params = {
     .adv_int_min = 0x100,
     .adv_int_max = 0x100,
     .adv_type = ADV_TYPE_IND,
@@ -69,7 +69,7 @@ static const esp_ble_adv_params_t adv_params = {
     .adv_filter_policy = ADV_FILTER_ALLOW_SCAN_ANY_CON_ANY,
 };
 
-static const esp_gatt_srvc_id_t ble_service_id = {
+static esp_gatt_srvc_id_t ble_service_id = {
     .is_primary = true,
     .id = {
         .inst_id = 0x00,
@@ -80,7 +80,7 @@ static const esp_gatt_srvc_id_t ble_service_id = {
     }
 };
 
-static const esp_bt_uuid_t ble_char_uuid = {
+static esp_bt_uuid_t ble_char_uuid = {
     .len = ESP_UUID_LEN_16,
     .uuid = {.uuid16 = BLE_CHAR_UUID}
 };
