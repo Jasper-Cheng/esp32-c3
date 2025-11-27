@@ -73,11 +73,11 @@ static uint8_t adv_payload[] = {
 };
 
 static esp_ble_adv_params_t adv_params = {
-    .adv_int_min = 0x100,
-    .adv_int_max = 0x100,
-    .adv_type = ADV_TYPE_IND,
-    .own_addr_type = BLE_ADDR_TYPE_PUBLIC,
-    .channel_map = ADV_CHNL_ALL,
+    .adv_int_min       = 0x40,   // 40ms
+    .adv_int_max       = 0x80,   // 80ms
+    .adv_type          = ADV_TYPE_IND,
+    .own_addr_type     = BLE_ADDR_TYPE_PUBLIC,
+    .channel_map       = ADV_CHNL_ALL,
     .adv_filter_policy = ADV_FILTER_ALLOW_SCAN_ANY_CON_ANY,
 };
 
@@ -166,11 +166,16 @@ static void gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param
     case ESP_GAP_BLE_ADV_START_COMPLETE_EVT:
         if (param->adv_start_cmpl.status != ESP_BT_STATUS_SUCCESS) {
             ESP_LOGE(TAG, "Advertising start failed: %d", param->adv_start_cmpl.status);
+        } else {
+            ESP_LOGI(TAG, "Advertising started");
         }
         break;
     case ESP_GAP_BLE_ADV_STOP_COMPLETE_EVT:
         if (param->adv_stop_cmpl.status != ESP_BT_STATUS_SUCCESS) {
             ESP_LOGE(TAG, "Advertising stop failed");
+        } else {
+            ESP_LOGW(TAG, "Advertising stopped, restarting");
+            esp_ble_gap_start_advertising(&adv_params);
         }
         break;
     default:
