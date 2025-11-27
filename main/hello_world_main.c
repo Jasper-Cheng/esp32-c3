@@ -5,10 +5,12 @@
  * 1. 提供蓝牙BLE服务（可连接，支持读写和通知）
  * 2. 接收60字节数据，每字节控制一个LED（0=灭，1-7为不同颜色）
  * 3. 通过GPIO1输出WS2812 LED控制信号
+ * 4. 通过BLE控制TD-8120MG舵机角度
  * 
  * 架构：
  * - BLE服务层：ble_service.c/h - 处理蓝牙通信
  * - LED驱动层：ws2812_driver.c/h - 控制WS2812 LED
+ * - 舵机驱动层：servo_driver.c/h - 控制TD-8120MG舵机
  * - 应用层：hello_world_main.c - 协调各模块工作
  */
 
@@ -21,6 +23,7 @@
 
 #include "ble_service.h"
 #include "ws2812_driver.h"
+#include "servo_driver.h"
 
 /* 日志标签 */
 static const char* TAG = "MAIN";
@@ -35,7 +38,20 @@ static const char* TAG = "MAIN";
 static void on_led_data_received(uint8_t *led_data)
 {
     // 更新LED状态
-    ws2812_update_leds(led_data);
+    // ws2812_update_leds(led_data);
+}
+
+/**
+ * @brief 舵机角度接收回调函数
+ * 
+ * 当通过蓝牙接收到舵机角度数据时调用
+ * 
+ * @param angle 目标角度 (0.0 ~ 270.0度)
+ */
+static void on_servo_angle_received(float angle)
+{
+    // 设置舵机角度
+    servo_set_angle(angle);
 }
 
 /**
@@ -76,18 +92,25 @@ void app_main(void)
     }
 
     // 2. 初始化WS2812 LED驱动
-    ret = ws2812_init();
+    // ret = ws2812_init();
+    // if (ret != ESP_OK) {
+    //     ESP_LOGE(TAG, "WS2812 init failed");
+    //     return;
+    // }
+
+    // 3. 初始化舵机驱动
+    ret = servo_init();
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "WS2812 init failed");
+        ESP_LOGE(TAG, "Servo init failed");
         return;
     }
 
-    // 3. 初始化BLE服务
-    ret = ble_service_init(on_led_data_received);
+    // 4. 初始化BLE服务
+    ret = ble_service_init(on_led_data_received, on_servo_angle_received);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "BLE init failed");
         return;
     }
 
-    ESP_LOGI(TAG, "System ready!");
+    ESP_LOGI(TAG, "System ready! Servo on GPIO2, LED on GPIO1");
 }

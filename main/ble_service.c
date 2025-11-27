@@ -14,23 +14,28 @@
 #include "esp_gatt_common_api.h"
 #include <string.h>
 #include <ctype.h>
+#include <stdio.h>
 
 /* 日志标签 */
 static const char* TAG = "BLE_SERVICE";
 
 /* GATT服务配置 */
-#define GATTS_NUM_HANDLE    4
+#define GATTS_NUM_HANDLE    6       // 增加到6个handle: 服务+LED特征值+LED描述符+舵机特征值+舵机描述符
 #define ADV_CONFIG_FLAG     BIT0
 #define SCAN_RSP_CONFIG_FLAG BIT1
 
 /* 全局变量 */
 static uint8_t g_led_data[WS2812_LED_COUNT] = {0};      // 当前LED数据
 static ble_led_data_callback_t g_led_callback = NULL;   // LED数据回调
+static ble_servo_callback_t g_servo_callback = NULL;    // 舵机数据回调
+static float g_servo_angle = 135.0f;                    // 当前舵机角度(默认中立位置)
 static uint8_t adv_config_state = ADV_CONFIG_FLAG | SCAN_RSP_CONFIG_FLAG;
 static esp_gatt_if_t ble_gatts_if = ESP_GATT_IF_NONE;
 static uint16_t ble_service_handle = 0;
-static uint16_t ble_char_handle = 0;
+static uint16_t ble_char_handle = 0;          // LED特征值句柄
+static uint16_t ble_servo_char_handle = 0;    // 舵机特征值句柄
 static uint16_t ble_conn_id = 0;
+static uint8_t char_add_count = 0;            // 特征值添加计数器
 
 static bool parse_led_data_string(const uint8_t *data, uint16_t len, uint8_t *out_led_data)
 {
@@ -85,6 +90,50 @@ static esp_bt_uuid_t ble_char_uuid = {
     .uuid = {.uuid16 = BLE_CHAR_UUID}
 };
 
+static esp_bt_uuid_t ble_servo_char_uuid = {
+    .len = ESP_UUID_LEN_16,
+    .uuid = {.uuid16 = BLE_SERVO_CHAR_UUID}
+};
+
+/**
+ * @brief 解析舵机角度数据
+ * 
+ * 支持两种格式：
+ * 1. 单字节：0-180映射到0-270度
+ * 2. 字符串：直接解析为角度值（如"135.5"）
+ */
+static bool parse_servo_data(const uint8_t *data, uint16_t len, float *out_angle)
+{
+    if (!data || !out_angle || len == 0) {
+        return false;
+    }
+    
+    // 尝试作为字符串解析
+    char str_buf[16] = {0};
+    uint16_t copy_len = (len < sizeof(str_buf) - 1) ? len : sizeof(str_buf) - 1;
+    memcpy(str_buf, data, copy_len);
+    
+    float angle = 0.0f;
+    if (sscanf(str_buf, "%f", &angle) == 1) {
+        // 成功解析为浮点数
+        if (angle >= 0.0f && angle <= 270.0f) {
+            *out_angle = angle;
+            return true;
+        }
+    }
+    
+    // 如果是单字节，映射0-180到0-270
+    if (len == 1) {
+        uint8_t val = data[0];
+        if (val <= 180) {
+            *out_angle = (float)val * 270.0f / 180.0f;
+            return true;
+        }
+    }
+    
+    return false;
+}
+
 /**
  * @brief GAP事件处理函数
  */
@@ -136,6 +185,8 @@ static void gatts_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_
     case ESP_GATTS_CREATE_EVT:
         ble_service_handle = param->create.service_handle;
         esp_ble_gatts_start_service(ble_service_handle);
+        char_add_count = 0;
+        // 添加LED控制特征值
         esp_ble_gatts_add_char(ble_service_handle, &ble_char_uuid,
                                ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE,
                                ESP_GATT_CHAR_PROP_BIT_READ |
@@ -145,7 +196,23 @@ static void gatts_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_
         break;
 
     case ESP_GATTS_ADD_CHAR_EVT:
-        ble_char_handle = param->add_char.attr_handle;
+        if (char_add_count == 0) {
+            // 第一个特征值：LED控制
+            ble_char_handle = param->add_char.attr_handle;
+            char_add_count++;
+            // 添加舵机控制特征值
+            esp_ble_gatts_add_char(ble_service_handle, &ble_servo_char_uuid,
+                                   ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE,
+                                   ESP_GATT_CHAR_PROP_BIT_READ |
+                                   ESP_GATT_CHAR_PROP_BIT_WRITE |
+                                   ESP_GATT_CHAR_PROP_BIT_NOTIFY,
+                                   NULL, NULL);
+        } else {
+            // 第二个特征值：舵机控制
+            ble_servo_char_handle = param->add_char.attr_handle;
+            ESP_LOGI(TAG, "LED char handle: %d, Servo char handle: %d", 
+                     ble_char_handle, ble_servo_char_handle);
+        }
         break;
 
     case ESP_GATTS_CONNECT_EVT:
@@ -157,20 +224,48 @@ static void gatts_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_
         break;
 
     case ESP_GATTS_WRITE_EVT:
-        if (parse_led_data_string(param->write.value, param->write.len, g_led_data)) {
-            if (g_led_callback) {
-                g_led_callback(g_led_data);
+        if (param->write.handle == ble_char_handle) {
+            // LED控制特征值写入
+            if (parse_led_data_string(param->write.value, param->write.len, g_led_data)) {
+                if (g_led_callback) {
+                    g_led_callback(g_led_data);
+                }
+                if (param->write.need_rsp) {
+                    esp_ble_gatts_send_response(gatts_if, param->write.conn_id,
+                                                param->write.trans_id, ESP_GATT_OK, NULL);
+                }
+                esp_ble_gatts_send_indicate(gatts_if, param->write.conn_id, ble_char_handle,
+                                            WS2812_LED_COUNT, g_led_data, false);
+            } else {
+                if (param->write.need_rsp) {
+                    esp_ble_gatts_send_response(gatts_if, param->write.conn_id,
+                                                param->write.trans_id, ESP_GATT_INVALID_ATTR_LEN, NULL);
+                }
             }
-            if (param->write.need_rsp) {
-                esp_ble_gatts_send_response(gatts_if, param->write.conn_id,
-                                            param->write.trans_id, ESP_GATT_OK, NULL);
-            }
-            esp_ble_gatts_send_indicate(gatts_if, param->write.conn_id, ble_char_handle,
-                                        WS2812_LED_COUNT, g_led_data, false);
-        } else {
-            if (param->write.need_rsp) {
-                esp_ble_gatts_send_response(gatts_if, param->write.conn_id,
-                                            param->write.trans_id, ESP_GATT_INVALID_ATTR_LEN, NULL);
+        } else if (param->write.handle == ble_servo_char_handle) {
+            // 舵机控制特征值写入
+            float angle;
+            if (parse_servo_data(param->write.value, param->write.len, &angle)) {
+                g_servo_angle = angle;
+                if (g_servo_callback) {
+                    g_servo_callback(angle);
+                }
+                if (param->write.need_rsp) {
+                    esp_ble_gatts_send_response(gatts_if, param->write.conn_id,
+                                                param->write.trans_id, ESP_GATT_OK, NULL);
+                }
+                // 发送通知，返回当前角度
+                char angle_str[16];
+                int len = snprintf(angle_str, sizeof(angle_str), "%.1f", g_servo_angle);
+                esp_ble_gatts_send_indicate(gatts_if, param->write.conn_id, ble_servo_char_handle,
+                                            len, (uint8_t*)angle_str, false);
+                ESP_LOGI(TAG, "Servo angle set to %.1f", angle);
+            } else {
+                if (param->write.need_rsp) {
+                    esp_ble_gatts_send_response(gatts_if, param->write.conn_id,
+                                                param->write.trans_id, ESP_GATT_INVALID_ATTR_LEN, NULL);
+                }
+                ESP_LOGW(TAG, "Invalid servo data");
             }
         }
         break;
@@ -178,8 +273,19 @@ static void gatts_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_
     case ESP_GATTS_READ_EVT: {
         esp_gatt_rsp_t rsp = {0};
         rsp.attr_value.handle = param->read.handle;
-        rsp.attr_value.len = WS2812_LED_COUNT;
-        memcpy(rsp.attr_value.value, g_led_data, WS2812_LED_COUNT);
+        
+        if (param->read.handle == ble_char_handle) {
+            // 读取LED数据
+            rsp.attr_value.len = WS2812_LED_COUNT;
+            memcpy(rsp.attr_value.value, g_led_data, WS2812_LED_COUNT);
+        } else if (param->read.handle == ble_servo_char_handle) {
+            // 读取舵机角度
+            char angle_str[16];
+            int len = snprintf(angle_str, sizeof(angle_str), "%.1f", g_servo_angle);
+            rsp.attr_value.len = len;
+            memcpy(rsp.attr_value.value, angle_str, len);
+        }
+        
         esp_ble_gatts_send_response(gatts_if, param->read.conn_id,
                                     param->read.trans_id, ESP_GATT_OK, &rsp);
         break;
@@ -193,12 +299,13 @@ static void gatts_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_
 /**
  * @brief 初始化BLE服务
  */
-esp_err_t ble_service_init(ble_led_data_callback_t callback)
+esp_err_t ble_service_init(ble_led_data_callback_t led_callback, ble_servo_callback_t servo_callback)
 {
     esp_err_t ret;
 
     // 保存回调函数
-    g_led_callback = callback;
+    g_led_callback = led_callback;
+    g_servo_callback = servo_callback;
 
     // 释放经典蓝牙内存
     ESP_ERROR_CHECK(esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT));

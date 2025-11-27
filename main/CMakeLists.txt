@@ -1,4 +1,4 @@
-idf_component_register(SRCS "hello_world_main.c"
+idf_component_register(SRCS "servo_driver.c" "hello_world_main.c"
                             "ble_service.c"
                             "ws2812_driver.c"
                     INCLUDE_DIRS ""
