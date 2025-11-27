@@ -21,6 +21,7 @@
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/queue.h"
 #include <string.h>
 #include <stdio.h>
 
@@ -34,6 +35,7 @@ static const char* TAG = "M701";
 static m701_sensor_data_t s_sensor_data = {0};
 static m701_data_callback_t s_data_callback = NULL;
 static bool s_initialized = false;
+static QueueHandle_t s_uart_queue = NULL;
 
 /**
  * @brief 验证校验和
@@ -105,65 +107,96 @@ static void m701_uart_task(void *arg)
 {
     uint8_t rx_buf[UART_BUF_SIZE];
     uint8_t frame_buf[M701_FRAME_SIZE];
-    int frame_idx = 0;
+    size_t frame_idx = 0;
     bool in_frame = false;
+    TickType_t last_byte_tick = 0;
+    const TickType_t frame_timeout = pdMS_TO_TICKS(500);
+    uart_event_t event;
     
     ESP_LOGI(TAG, "UART read task started");
     
     while (1) {
-        int len = uart_read_bytes(M701_UART_NUM, rx_buf, sizeof(rx_buf), pdMS_TO_TICKS(100));
-        
-        if (len > 0) {
-            for (int i = 0; i < len; i++) {
-                uint8_t byte = rx_buf[i];
-                
-                // 寻找帧头
-                if (!in_frame && byte == M701_FRAME_HEADER) {
-                    in_frame = true;
-                    frame_idx = 0;
-                    frame_buf[frame_idx++] = byte;
-                    continue;
+        if (s_uart_queue == NULL) {
+            vTaskDelay(pdMS_TO_TICKS(100));
+            continue;
+        }
+
+        if (xQueueReceive(s_uart_queue, &event, frame_timeout) != pdTRUE) {
+            // 超时无事件，检查是否需要重置帧
+            if (in_frame && (xTaskGetTickCount() - last_byte_tick) > frame_timeout) {
+                in_frame = false;
+                frame_idx = 0;
+            }
+            continue;
+        }
+
+        switch (event.type) {
+        case UART_DATA: {
+            size_t bytes_to_read = event.size;
+            while (bytes_to_read > 0) {
+                int chunk = uart_read_bytes(M701_UART_NUM, rx_buf,
+                                            bytes_to_read > UART_BUF_SIZE ? UART_BUF_SIZE : bytes_to_read,
+                                            pdMS_TO_TICKS(20));
+                if (chunk <= 0) {
+                    break;
                 }
-                
-                // 收集帧数据
-                if (in_frame) {
-                    frame_buf[frame_idx++] = byte;
-                    
-                    // 帧完成
-                    if (frame_idx >= M701_FRAME_SIZE) {
+                bytes_to_read -= chunk;
+
+                int offset = 0;
+                while (offset < chunk) {
+                    if (!in_frame) {
+                        uint8_t *header = (uint8_t *)memchr(rx_buf + offset, M701_FRAME_HEADER, chunk - offset);
+                        if (!header) {
+                            break;
+                        }
+                        offset = header - rx_buf;
+                        in_frame = true;
+                        frame_idx = 0;
+                    }
+
+                    size_t bytes_needed = M701_FRAME_SIZE - frame_idx;
+                    size_t remaining = (size_t)(chunk - offset);
+                    size_t copy_len = bytes_needed < remaining ? bytes_needed : remaining;
+                    memcpy(frame_buf + frame_idx, rx_buf + offset, copy_len);
+                    frame_idx += copy_len;
+                    offset += copy_len;
+                    last_byte_tick = xTaskGetTickCount();
+
+                    if (frame_idx == M701_FRAME_SIZE) {
                         m701_sensor_data_t temp_data;
                         if (parse_frame(frame_buf, &temp_data)) {
-                            // 更新全局数据
                             memcpy(&s_sensor_data, &temp_data, sizeof(m701_sensor_data_t));
-                            
                             ESP_LOGI(TAG, "CO2:%d HCHO:%d TVOC:%d PM2.5:%d PM10:%d T:%.1f H:%.1f",
                                      temp_data.co2, temp_data.hcho, temp_data.tvoc,
                                      temp_data.pm25, temp_data.pm10,
                                      temp_data.temperature, temp_data.humidity);
-                            
-                            // 调用回调
                             if (s_data_callback) {
                                 s_data_callback(&temp_data);
                             }
                         }
-                        
                         in_frame = false;
                         frame_idx = 0;
                     }
                 }
             }
+            break;
         }
-        
-        // 超时重置帧状态
-        if (in_frame && frame_idx > 0) {
-            // 如果太久没收到完整帧，重置
-            static TickType_t last_byte_time = 0;
-            if (len > 0) {
-                last_byte_time = xTaskGetTickCount();
-            } else if (xTaskGetTickCount() - last_byte_time > pdMS_TO_TICKS(500)) {
-                in_frame = false;
-                frame_idx = 0;
-            }
+        case UART_FIFO_OVF:
+        case UART_BUFFER_FULL:
+            ESP_LOGW(TAG, "UART FIFO overflow or buffer full");
+            uart_flush_input(M701_UART_NUM);
+            xQueueReset(s_uart_queue);
+            in_frame = false;
+            frame_idx = 0;
+            break;
+        case UART_PARITY_ERR:
+            ESP_LOGW(TAG, "UART parity error");
+            break;
+        case UART_FRAME_ERR:
+            ESP_LOGW(TAG, "UART frame error");
+            break;
+        default:
+            break;
         }
     }
 }
@@ -208,7 +241,7 @@ esp_err_t m701_sensor_init(m701_data_callback_t callback)
     }
     
     // 安装UART驱动
-    ret = uart_driver_install(M701_UART_NUM, UART_BUF_SIZE * 2, 0, 0, NULL, 0);
+    ret = uart_driver_install(M701_UART_NUM, UART_BUF_SIZE * 2, 0, 20, &s_uart_queue, 0);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "UART driver install failed: %s", esp_err_to_name(ret));
         return ret;
