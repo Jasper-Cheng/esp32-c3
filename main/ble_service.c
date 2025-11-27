@@ -20,9 +20,12 @@
 static const char* TAG = "BLE_SERVICE";
 
 /* GATT服务配置 */
-#define GATTS_NUM_HANDLE    6       // 增加到6个handle: 服务+LED特征值+LED描述符+舵机特征值+舵机描述符
+#define GATTS_NUM_HANDLE    12      // 服务(1) + 3个特征值(各3: 声明+值+CCCD)
 #define ADV_CONFIG_FLAG     BIT0
 #define SCAN_RSP_CONFIG_FLAG BIT1
+
+/* CCCD UUID (固定值 0x2902) */
+#define CCCD_UUID           0x2902
 
 /* 全局变量 */
 static uint8_t g_led_data[WS2812_LED_COUNT] = {0};      // 当前LED数据
@@ -34,7 +37,11 @@ static esp_gatt_if_t ble_gatts_if = ESP_GATT_IF_NONE;
 static uint16_t ble_service_handle = 0;
 static uint16_t ble_char_handle = 0;          // LED特征值句柄
 static uint16_t ble_servo_char_handle = 0;    // 舵机特征值句柄
+static uint16_t ble_sensor_char_handle = 0;   // 传感器特征值句柄
+static uint16_t ble_sensor_cccd_handle = 0;   // 传感器CCCD句柄
 static uint16_t ble_conn_id = 0;
+static bool ble_connected = false;            // 连接状态
+static bool sensor_notify_enabled = false;    // 传感器通知是否已启用
 static uint8_t char_add_count = 0;            // 特征值添加计数器
 
 static bool parse_led_data_string(const uint8_t *data, uint16_t len, uint8_t *out_led_data)
@@ -61,7 +68,7 @@ static bool parse_led_data_string(const uint8_t *data, uint16_t len, uint8_t *ou
 
 static uint8_t adv_payload[] = {
     0x02, 0x01, 0x06,
-    0x08, 0x09, 'E', 'S', 'P', '-', 'L', 'E', 'D',
+    0x0A, 0x09, 'J', 'a', 's', 'p', 'e', 'r', '-', 'C', '3',
     0x03, 0x03, 0xFF, 0x00,
 };
 
@@ -93,6 +100,16 @@ static esp_bt_uuid_t ble_char_uuid = {
 static esp_bt_uuid_t ble_servo_char_uuid = {
     .len = ESP_UUID_LEN_16,
     .uuid = {.uuid16 = BLE_SERVO_CHAR_UUID}
+};
+
+static esp_bt_uuid_t ble_sensor_char_uuid = {
+    .len = ESP_UUID_LEN_16,
+    .uuid = {.uuid16 = BLE_SENSOR_CHAR_UUID}
+};
+
+static esp_bt_uuid_t cccd_uuid = {
+    .len = ESP_UUID_LEN_16,
+    .uuid = {.uuid16 = CCCD_UUID}
 };
 
 /**
@@ -207,19 +224,42 @@ static void gatts_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_
                                    ESP_GATT_CHAR_PROP_BIT_WRITE |
                                    ESP_GATT_CHAR_PROP_BIT_NOTIFY,
                                    NULL, NULL);
-        } else {
+        } else if (char_add_count == 1) {
             // 第二个特征值：舵机控制
             ble_servo_char_handle = param->add_char.attr_handle;
-            ESP_LOGI(TAG, "LED char handle: %d, Servo char handle: %d", 
-                     ble_char_handle, ble_servo_char_handle);
+            char_add_count++;
+            // 添加传感器数据特征值
+            esp_ble_gatts_add_char(ble_service_handle, &ble_sensor_char_uuid,
+                                   ESP_GATT_PERM_READ,
+                                   ESP_GATT_CHAR_PROP_BIT_READ |
+                                   ESP_GATT_CHAR_PROP_BIT_NOTIFY,
+                                   NULL, NULL);
+        } else {
+            // 第三个特征值：传感器数据
+            ble_sensor_char_handle = param->add_char.attr_handle;
+            // 为传感器特征值添加CCCD描述符
+            esp_ble_gatts_add_char_descr(ble_service_handle, &cccd_uuid,
+                                         ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE,
+                                         NULL, NULL);
         }
+        break;
+
+    case ESP_GATTS_ADD_CHAR_DESCR_EVT:
+        ble_sensor_cccd_handle = param->add_char_descr.attr_handle;
+        ESP_LOGI(TAG, "Char handles - LED:%d, Servo:%d, Sensor:%d, CCCD:%d", 
+                 ble_char_handle, ble_servo_char_handle, ble_sensor_char_handle, ble_sensor_cccd_handle);
         break;
 
     case ESP_GATTS_CONNECT_EVT:
         ble_conn_id = param->connect.conn_id;
+        ble_connected = true;
+        ESP_LOGI(TAG, "Client connected, conn_id=%d", ble_conn_id);
         break;
 
     case ESP_GATTS_DISCONNECT_EVT:
+        ble_connected = false;
+        sensor_notify_enabled = false;  // 断开时重置通知状态
+        ESP_LOGI(TAG, "Client disconnected");
         esp_ble_gap_start_advertising(&adv_params);
         break;
 
@@ -266,6 +306,17 @@ static void gatts_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_
                                                 param->write.trans_id, ESP_GATT_INVALID_ATTR_LEN, NULL);
                 }
                 ESP_LOGW(TAG, "Invalid servo data");
+            }
+        } else if (param->write.handle == ble_sensor_cccd_handle) {
+            // CCCD写入 - 启用/禁用通知
+            if (param->write.len == 2) {
+                uint16_t cccd_value = param->write.value[0] | (param->write.value[1] << 8);
+                sensor_notify_enabled = (cccd_value == 0x0001);
+                ESP_LOGI(TAG, "Sensor notify %s", sensor_notify_enabled ? "ENABLED" : "DISABLED");
+            }
+            if (param->write.need_rsp) {
+                esp_ble_gatts_send_response(gatts_if, param->write.conn_id,
+                                            param->write.trans_id, ESP_GATT_OK, NULL);
             }
         }
         break;
@@ -352,4 +403,27 @@ esp_err_t ble_service_init(ble_led_data_callback_t led_callback, ble_servo_callb
 uint8_t* ble_service_get_led_data(void)
 {
     return g_led_data;
+}
+
+/**
+ * @brief 发送传感器数据通知
+ */
+esp_err_t ble_service_notify_sensor_data(const char *data, uint16_t len)
+{
+    if (!ble_connected || !sensor_notify_enabled) {
+        return ESP_FAIL;
+    }
+    
+    if (ble_gatts_if == ESP_GATT_IF_NONE || ble_sensor_char_handle == 0) {
+        return ESP_FAIL;
+    }
+    
+    esp_err_t ret = esp_ble_gatts_send_indicate(ble_gatts_if, ble_conn_id, 
+                                                 ble_sensor_char_handle,
+                                                 len, (uint8_t*)data, false);
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to send sensor notify: %s", esp_err_to_name(ret));
+    }
+    
+    return ret;
 }

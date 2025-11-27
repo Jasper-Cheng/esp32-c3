@@ -11,10 +11,11 @@
 #include "esp_err.h"
 
 /* BLE配置参数 */
-#define BLE_DEVICE_NAME         "ESP-LED"
+#define BLE_DEVICE_NAME         "Jasper-C3"
 #define BLE_SERVICE_UUID        0x00FF
 #define BLE_CHAR_UUID           0xFF01      // LED控制特征值
 #define BLE_SERVO_CHAR_UUID     0xFF02      // 舵机控制特征值
+#define BLE_SENSOR_CHAR_UUID    0xFF03      // 传感器数据特征值
  
 /**
  * @brief LED数据接收回调函数类型
@@ -47,5 +48,18 @@ esp_err_t ble_service_init(ble_led_data_callback_t led_callback, ble_servo_callb
  * @return 当前的LED颜色索引数组
  */
 uint8_t* ble_service_get_led_data(void);
+
+/**
+ * @brief 发送传感器数据通知
+ * 
+ * 通过BLE向连接的客户端发送传感器数据
+ * 
+ * @param data JSON格式的传感器数据字符串
+ * @param len 数据长度
+ * @return 
+ *     - ESP_OK: 成功
+ *     - ESP_FAIL: 失败（未连接等）
+ */
+esp_err_t ble_service_notify_sensor_data(const char *data, uint16_t len);
 
 #endif // BLE_SERVICE_H

@@ -6,11 +6,13 @@
  * 2. 接收60字节数据，每字节控制一个LED（0=灭，1-7为不同颜色）
  * 3. 通过GPIO1输出WS2812 LED控制信号
  * 4. 通过BLE控制TD-8120MG舵机角度
+ * 5. 通过M701SC传感器监测空气质量
  * 
  * 架构：
  * - BLE服务层：ble_service.c/h - 处理蓝牙通信
  * - LED驱动层：ws2812_driver.c/h - 控制WS2812 LED
  * - 舵机驱动层：servo_driver.c/h - 控制TD-8120MG舵机
+ * - 传感器驱动层：m701_sensor.c/h - 读取M701SC空气质量数据
  * - 应用层：hello_world_main.c - 协调各模块工作
  */
 
@@ -24,6 +26,7 @@
 #include "ble_service.h"
 #include "ws2812_driver.h"
 #include "servo_driver.h"
+#include "m701_sensor.h"
 
 /* 日志标签 */
 static const char* TAG = "MAIN";
@@ -51,7 +54,25 @@ static void on_led_data_received(uint8_t *led_data)
 static void on_servo_angle_received(float angle)
 {
     // 设置舵机角度
-    servo_set_angle(angle);
+    // servo_set_angle(angle);
+}
+
+/**
+ * @brief 传感器数据回调函数
+ * 
+ * 当M701传感器读取到新数据时调用
+ * 
+ * @param data 传感器数据指针
+ */
+static void on_sensor_data_received(const m701_sensor_data_t *data)
+{
+    // 将数据转换为JSON并通过BLE发送
+    char json_buf[128];
+    int len = m701_sensor_to_json(data, json_buf, sizeof(json_buf));
+    
+    if (len > 0) {
+        ble_service_notify_sensor_data(json_buf, len);
+    }
 }
 
 /**
@@ -99,18 +120,25 @@ void app_main(void)
     // }
 
     // 3. 初始化舵机驱动
-    ret = servo_init();
+    // ret = servo_init();
+    // if (ret != ESP_OK) {
+    //     ESP_LOGE(TAG, "Servo init failed");
+    //     return;
+    // }
+
+    // 4. 初始化M701传感器
+    ret = m701_sensor_init(on_sensor_data_received);
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Servo init failed");
+        ESP_LOGE(TAG, "M701 sensor init failed");
         return;
     }
 
-    // 4. 初始化BLE服务
+    // 5. 初始化BLE服务
     ret = ble_service_init(on_led_data_received, on_servo_angle_received);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "BLE init failed");
         return;
     }
 
-    ESP_LOGI(TAG, "System ready! Servo on GPIO2, LED on GPIO1");
+    ESP_LOGI(TAG, "System ready! Servo:GPIO2, M701:GPIO3");
 }
