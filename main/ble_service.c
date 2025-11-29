@@ -20,7 +20,7 @@
 static const char* TAG = "BLE_SERVICE";
 
 /* GATT服务配置 */
-#define GATTS_NUM_HANDLE    12      // 服务(1) + 3个特征值(各3: 声明+值+CCCD)
+#define GATTS_NUM_HANDLE    16      // 服务(1) + 5个特征值
 #define ADV_CONFIG_FLAG     BIT0
 #define SCAN_RSP_CONFIG_FLAG BIT1
 
@@ -39,10 +39,14 @@ static uint16_t ble_char_handle = 0;          // LED特征值句柄
 static uint16_t ble_servo_char_handle = 0;    // 舵机特征值句柄
 static uint16_t ble_sensor_char_handle = 0;   // 传感器特征值句柄
 static uint16_t ble_sensor_cccd_handle = 0;   // 传感器CCCD句柄
+static uint16_t ble_wifi_config_handle = 0;   // WiFi配置特征值句柄
+static uint16_t ble_mqtt_config_handle = 0;   // MQTT配置特征值句柄
 static uint16_t ble_conn_id = 0;
 static bool ble_connected = false;            // 连接状态
 static bool sensor_notify_enabled = false;    // 传感器通知是否已启用
 static uint8_t char_add_count = 0;            // 特征值添加计数器
+static ble_wifi_config_callback_t g_wifi_config_callback = NULL;
+static ble_mqtt_config_callback_t g_mqtt_config_callback = NULL;
 
 static bool parse_led_data_string(const uint8_t *data, uint16_t len, uint8_t *out_led_data)
 {
@@ -110,6 +114,16 @@ static esp_bt_uuid_t ble_sensor_char_uuid = {
 static esp_bt_uuid_t cccd_uuid = {
     .len = ESP_UUID_LEN_16,
     .uuid = {.uuid16 = CCCD_UUID}
+};
+
+static esp_bt_uuid_t ble_wifi_config_uuid = {
+    .len = ESP_UUID_LEN_16,
+    .uuid = {.uuid16 = BLE_WIFI_CONFIG_UUID}
+};
+
+static esp_bt_uuid_t ble_mqtt_config_uuid = {
+    .len = ESP_UUID_LEN_16,
+    .uuid = {.uuid16 = BLE_MQTT_CONFIG_UUID}
 };
 
 /**
@@ -239,20 +253,41 @@ static void gatts_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_
                                    ESP_GATT_CHAR_PROP_BIT_READ |
                                    ESP_GATT_CHAR_PROP_BIT_NOTIFY,
                                    NULL, NULL);
-        } else {
+        } else if (char_add_count == 2) {
             // 第三个特征值：传感器数据
             ble_sensor_char_handle = param->add_char.attr_handle;
+            char_add_count++;
             // 为传感器特征值添加CCCD描述符
             esp_ble_gatts_add_char_descr(ble_service_handle, &cccd_uuid,
                                          ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE,
                                          NULL, NULL);
+        } else if (char_add_count == 3) {
+            // 第四个特征值：WiFi配置
+            ble_wifi_config_handle = param->add_char.attr_handle;
+            char_add_count++;
+            // 添加MQTT配置特征值
+            esp_ble_gatts_add_char(ble_service_handle, &ble_mqtt_config_uuid,
+                                   ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE,
+                                   ESP_GATT_CHAR_PROP_BIT_READ |
+                                   ESP_GATT_CHAR_PROP_BIT_WRITE,
+                                   NULL, NULL);
+        } else if (char_add_count == 4) {
+            // 第五个特征值：MQTT配置
+            ble_mqtt_config_handle = param->add_char.attr_handle;
+            ESP_LOGI(TAG, "All char handles - LED:%d, Servo:%d, Sensor:%d, WiFi:%d, MQTT:%d", 
+                     ble_char_handle, ble_servo_char_handle, ble_sensor_char_handle,
+                     ble_wifi_config_handle, ble_mqtt_config_handle);
         }
         break;
 
     case ESP_GATTS_ADD_CHAR_DESCR_EVT:
         ble_sensor_cccd_handle = param->add_char_descr.attr_handle;
-        ESP_LOGI(TAG, "Char handles - LED:%d, Servo:%d, Sensor:%d, CCCD:%d", 
-                 ble_char_handle, ble_servo_char_handle, ble_sensor_char_handle, ble_sensor_cccd_handle);
+        // 添加WiFi配置特征值
+        esp_ble_gatts_add_char(ble_service_handle, &ble_wifi_config_uuid,
+                               ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE,
+                               ESP_GATT_CHAR_PROP_BIT_READ |
+                               ESP_GATT_CHAR_PROP_BIT_WRITE,
+                               NULL, NULL);
         break;
 
     case ESP_GATTS_CONNECT_EVT:
@@ -319,6 +354,50 @@ static void gatts_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_
                 sensor_notify_enabled = (cccd_value == 0x0001);
                 ESP_LOGI(TAG, "Sensor notify %s", sensor_notify_enabled ? "ENABLED" : "DISABLED");
             }
+            if (param->write.need_rsp) {
+                esp_ble_gatts_send_response(gatts_if, param->write.conn_id,
+                                            param->write.trans_id, ESP_GATT_OK, NULL);
+            }
+        } else if (param->write.handle == ble_wifi_config_handle) {
+            // WiFi配置写入
+            char config_str[256] = {0};
+            int copy_len = (param->write.len < sizeof(config_str) - 1) ? param->write.len : sizeof(config_str) - 1;
+            memcpy(config_str, param->write.value, copy_len);
+            config_str[copy_len] = '\0';
+            
+            ESP_LOGI(TAG, "WiFi config received: %s", config_str);
+            
+            // 解析JSON: {"ssid":"xxx","password":"xxx"}
+            char ssid[64] = {0};
+            char password[64] = {0};
+            
+            // 简单JSON解析（可以使用cJSON库，这里简化处理）
+            if (sscanf(config_str, "{\"ssid\":\"%63[^\"]\",\"password\":\"%63[^\"]\"}", ssid, password) == 2 ||
+                sscanf(config_str, "{\"ssid\":\"%63[^\"]\"}", ssid) == 1) {
+                if (g_wifi_config_callback) {
+                    g_wifi_config_callback(ssid, password);
+                }
+            } else {
+                ESP_LOGW(TAG, "Invalid WiFi config format");
+            }
+            
+            if (param->write.need_rsp) {
+                esp_ble_gatts_send_response(gatts_if, param->write.conn_id,
+                                            param->write.trans_id, ESP_GATT_OK, NULL);
+            }
+        } else if (param->write.handle == ble_mqtt_config_handle) {
+            // MQTT配置写入
+            char config_str[512] = {0};
+            int copy_len = (param->write.len < sizeof(config_str) - 1) ? param->write.len : sizeof(config_str) - 1;
+            memcpy(config_str, param->write.value, copy_len);
+            config_str[copy_len] = '\0';
+            
+            ESP_LOGI(TAG, "MQTT config received: %s", config_str);
+            
+            if (g_mqtt_config_callback) {
+                g_mqtt_config_callback(config_str);
+            }
+            
             if (param->write.need_rsp) {
                 esp_ble_gatts_send_response(gatts_if, param->write.conn_id,
                                             param->write.trans_id, ESP_GATT_OK, NULL);
@@ -431,4 +510,20 @@ esp_err_t ble_service_notify_sensor_data(const char *data, uint16_t len)
     }
     
     return ret;
+}
+
+/**
+ * @brief 设置WiFi配置回调
+ */
+void ble_service_set_wifi_config_callback(ble_wifi_config_callback_t callback)
+{
+    g_wifi_config_callback = callback;
+}
+
+/**
+ * @brief 设置MQTT配置回调
+ */
+void ble_service_set_mqtt_config_callback(ble_mqtt_config_callback_t callback)
+{
+    g_mqtt_config_callback = callback;
 }

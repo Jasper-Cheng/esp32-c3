@@ -16,6 +16,8 @@
 #define BLE_CHAR_UUID           0xFF01      // LED控制特征值
 #define BLE_SERVO_CHAR_UUID     0xFF02      // 舵机控制特征值
 #define BLE_SENSOR_CHAR_UUID    0xFF03      // 传感器数据特征值
+#define BLE_WIFI_CONFIG_UUID    0xFF04      // WiFi配置特征值
+#define BLE_MQTT_CONFIG_UUID    0xFF05      // MQTT配置特征值
  
 /**
  * @brief LED数据接收回调函数类型
@@ -61,5 +63,34 @@ uint8_t* ble_service_get_led_data(void);
  *     - ESP_FAIL: 失败（未连接等）
  */
 esp_err_t ble_service_notify_sensor_data(const char *data, uint16_t len);
+
+/**
+ * @brief WiFi配置回调函数类型
+ * 
+ * @param ssid WiFi SSID
+ * @param password WiFi密码
+ */
+typedef void (*ble_wifi_config_callback_t)(const char *ssid, const char *password);
+
+/**
+ * @brief MQTT配置回调函数类型
+ * 
+ * @param config_json MQTT配置JSON字符串
+ */
+typedef void (*ble_mqtt_config_callback_t)(const char *config_json);
+
+/**
+ * @brief 设置WiFi配置回调
+ * 
+ * @param callback WiFi配置回调函数
+ */
+void ble_service_set_wifi_config_callback(ble_wifi_config_callback_t callback);
+
+/**
+ * @brief 设置MQTT配置回调
+ * 
+ * @param callback MQTT配置回调函数
+ */
+void ble_service_set_mqtt_config_callback(ble_mqtt_config_callback_t callback);
 
 #endif // BLE_SERVICE_H
