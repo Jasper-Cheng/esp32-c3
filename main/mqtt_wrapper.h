@@ -8,7 +8,7 @@
  * 2. 调用 mqtt_client_set_config(config) 配置MQTT服务器信息
  * 3. 调用 mqtt_client_connect() 连接MQTT服务器
  * 4. 连接成功后会自动订阅 device/{sn}/control 主题
- * 5. client_id自动生成为 jasper_{sn}（如果配置中未提供）
+ * 5. client_id自动生成为 device_{sn}（如果配置中未提供）
  */
 
 #ifndef MQTT_WRAPPER_H
@@ -41,7 +41,7 @@ typedef struct {
     uint16_t port;         // 端口（默认1883）
     char username[64];     // 用户名（可选）
     char password[64];     // 密码（可选）
-    char client_id[64];    // 客户端ID（可选，自动生成jasper_{sn}）
+    char client_id[64];    // 客户端ID（可选，自动生成device_{sn}）
 } mqtt_config_t;
 
 /**

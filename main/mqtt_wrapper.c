@@ -5,7 +5,7 @@
  * 
  * 特性：
  * - 通过SN参数初始化，支持多设备复用
- * - 自动生成client_id：jasper_{sn}
+ * - 自动生成client_id：device_{sn}
  * - 自动订阅控制主题：device/{sn}/control
  */
 
@@ -40,13 +40,13 @@ static void get_client_id(char *client_id, size_t len)
         return;
     }
     
-    // 自动生成包含SN的client_id格式：jasper_{SN}
-    // 使用SN作为唯一标识，格式：jasper_M701001
+    // 自动生成包含SN的client_id格式：device_{SN}
+    // 使用SN作为唯一标识，格式：device_M701001
     if (s_sn[0] != '\0') {
-        snprintf(client_id, len, "jasper_%s", s_sn);
+        snprintf(client_id, len, "device_%s", s_sn);
     } else {
         // 如果SN未设置，使用默认值
-        strncpy(client_id, "jasper_unknown", len - 1);
+        strncpy(client_id, "device_unknown", len - 1);
         client_id[len - 1] = '\0';
     }
 }
