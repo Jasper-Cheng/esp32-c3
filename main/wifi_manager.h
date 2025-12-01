@@ -63,5 +63,14 @@ bool wifi_manager_is_connected(void);
  */
 const char* wifi_manager_get_ip(char *ip_buf, size_t buf_size);
 
+/**
+ * @brief 获取当前WiFi配置信息（JSON格式）
+ * 
+ * @param json_buf 输出缓冲区
+ * @param buf_size 缓冲区大小
+ * @return 实际写入的字节数，失败返回0
+ */
+int wifi_manager_get_config_json(char *json_buf, size_t buf_size);
+
 #endif // WIFI_MANAGER_H
 

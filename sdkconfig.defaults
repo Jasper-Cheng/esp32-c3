@@ -38,3 +38,10 @@ CONFIG_BT_BLE_SMP_ENABLE=y
 # Log Level
 CONFIG_LOG_DEFAULT_LEVEL_INFO=y
 
+# WiFi/BLE Coexistence Configuration
+# Enable software coexistence (already enabled by default, but explicitly set here)
+CONFIG_ESP_COEX_SW_COEXIST_ENABLE=y
+CONFIG_ESP32_WIFI_SW_COEXIST_ENABLE=y
+CONFIG_ESP_WIFI_SW_COEXIST_ENABLE=y
+CONFIG_BT_BLUEDROID_ESP_COEX_VSC=y
+

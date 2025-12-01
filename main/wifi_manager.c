@@ -5,7 +5,6 @@
  */
 
 #include "wifi_manager.h"
-#include "ble_service.h"
 #include "esp_log.h"
 #include "esp_wifi.h"
 #include "esp_event.h"
@@ -14,6 +13,7 @@
 #include "freertos/task.h"
 #include "freertos/event_groups.h"
 #include <string.h>
+#include <stdio.h>
 
 /* 日志标签 */
 static const char* TAG = "WIFI_MGR";
@@ -56,6 +56,8 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
             }
             
             if (s_retry_num < WIFI_MAX_RETRY) {
+                // 增加重试延迟，给WiFi/BLE共存机制更多时间协调
+                vTaskDelay(pdMS_TO_TICKS(2000));
                 esp_wifi_connect();
                 s_retry_num++;
                 ESP_LOGI(TAG, "Retry to connect to AP (%d/%d)", s_retry_num, WIFI_MAX_RETRY);
@@ -138,10 +140,19 @@ esp_err_t wifi_manager_connect(const char *ssid, const char *password)
     }
     
     ESP_LOGI(TAG, "Connecting to WiFi: %s", ssid);
+    ESP_LOGI(TAG, "Using WiFi/BLE coexistence mechanism");
     
-    // 停止BLE广播以释放射频资源，避免WiFi/BLE共存冲突
-    ble_service_stop_advertising();
-    vTaskDelay(pdMS_TO_TICKS(200)); // 等待200ms确保BLE完全停止
+    // 如果已经连接，先断开当前连接以支持重新配网
+    if (s_connected) {
+        ESP_LOGI(TAG, "Already connected, disconnecting first to allow reconfiguration");
+        esp_wifi_disconnect();
+        // 等待断开完成
+        vTaskDelay(pdMS_TO_TICKS(500));
+        s_connected = false;
+        if (s_status_callback) {
+            s_status_callback(false, NULL);
+        }
+    }
     
     // 清除事件组
     xEventGroupClearBits(s_wifi_event_group, WIFI_CONNECTED_BIT | WIFI_FAIL_BIT);
@@ -167,20 +178,13 @@ esp_err_t wifi_manager_connect(const char *ssid, const char *password)
     
     if (bits & WIFI_CONNECTED_BIT) {
         ESP_LOGI(TAG, "WiFi connected successfully");
-        // WiFi连接成功后，延迟恢复BLE广播，以便用户可以继续通过BLE配置MQTT
-        // 延迟2秒确保WiFi连接稳定
-        vTaskDelay(pdMS_TO_TICKS(2000));
-        ble_service_start_advertising();
         return ESP_OK;
+    } else if (bits & WIFI_FAIL_BIT) {
+        ESP_LOGE(TAG, "WiFi connection failed");
+        return ESP_FAIL;
     } else {
-        // 连接失败或超时，恢复BLE广播
-        ESP_LOGE(TAG, "WiFi connection failed, restoring BLE advertising");
-        ble_service_start_advertising();
-        if (bits & WIFI_FAIL_BIT) {
-            return ESP_FAIL;
-        } else {
-            return ESP_ERR_TIMEOUT;
-        }
+        ESP_LOGE(TAG, "WiFi connection timeout");
+        return ESP_ERR_TIMEOUT;
     }
 }
 
@@ -221,5 +225,39 @@ const char* wifi_manager_get_ip(char *ip_buf, size_t buf_size)
     }
     
     return s_ip_addr;
+}
+
+/**
+ * @brief 获取当前WiFi配置信息（JSON格式）
+ */
+int wifi_manager_get_config_json(char *json_buf, size_t buf_size)
+{
+    if (!json_buf || buf_size == 0) {
+        return 0;
+    }
+    
+    wifi_config_t wifi_config = {0};
+    esp_err_t ret = esp_wifi_get_config(WIFI_IF_STA, &wifi_config);
+    
+    if (ret != ESP_OK) {
+        // 获取配置失败，返回状态信息
+        return snprintf(json_buf, buf_size, "{\"status\":\"not_configured\"}");
+    }
+    
+    // 获取SSID
+    char ssid[33] = {0};
+    strncpy(ssid, (char*)wifi_config.sta.ssid, sizeof(ssid) - 1);
+    
+    if (s_connected) {
+        // 已连接，返回SSID、状态和IP
+        return snprintf(json_buf, buf_size, 
+                       "{\"ssid\":\"%s\",\"status\":\"connected\",\"ip\":\"%s\"}",
+                       ssid, s_ip_addr[0] ? s_ip_addr : "0.0.0.0");
+    } else {
+        // 未连接，返回SSID和状态
+        return snprintf(json_buf, buf_size, 
+                       "{\"ssid\":\"%s\",\"status\":\"disconnected\"}",
+                       ssid);
+    }
 }
 
