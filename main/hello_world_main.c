@@ -35,6 +35,10 @@
 /* 日志标签 */
 static const char* TAG = "MAIN";
 
+/* 设备SN定义（唯一标识） */
+#define LED_STRIP_SN       "LED001"      // 灯带序列号
+#define SENSOR_SN          "M701001"     // M701传感器序列号
+
 /**
  * @brief LED数据接收回调函数
  * 
@@ -78,9 +82,11 @@ static void on_sensor_data_received(const m701_sensor_data_t *data)
         // 通过BLE发送
         ble_service_notify_sensor_data(json_buf, len);
         
-        // 通过MQTT发布
+        // 通过MQTT发布（使用传感器SN）
         if (mqtt_client_is_connected()) {
-            mqtt_client_publish("sensor/data", (uint8_t*)json_buf, len, 1);
+            char sensor_topic[128];
+            snprintf(sensor_topic, sizeof(sensor_topic), "%s/data", SENSOR_SN);
+            mqtt_client_publish(sensor_topic, (uint8_t*)json_buf, len, 1);
         }
     }
 }
@@ -123,9 +129,17 @@ static void on_mqtt_message(const char *topic, const uint8_t *data, int len)
     
     ESP_LOGI(TAG, "MQTT message received");
     
-    // 解析主题，判断是LED控制还是传感器控制
-    if (strstr(topic, "/control/led") != NULL) {
-        // LED控制
+    // 解析主题，基于SN匹配（格式：{prefix}/{SN}/control 或 {prefix}/{SN}/query）
+    char led_control_pattern[128];
+    char sensor_query_pattern[128];
+    char sensor_control_pattern[128];
+    
+    snprintf(led_control_pattern, sizeof(led_control_pattern), "/%s/control", LED_STRIP_SN);
+    snprintf(sensor_query_pattern, sizeof(sensor_query_pattern), "/%s/query", SENSOR_SN);
+    snprintf(sensor_control_pattern, sizeof(sensor_control_pattern), "/%s/control", SENSOR_SN);
+    
+    if (strstr(topic, led_control_pattern) != NULL) {
+        // LED控制 - 匹配LED SN
         uint8_t led_data[60] = {0};
         int count = 0;
         for (int i = 0; i < len && count < 60; i++) {
@@ -137,18 +151,20 @@ static void on_mqtt_message(const char *topic, const uint8_t *data, int len)
         if (count > 0) {
             on_led_data_received(led_data);
         }
-    } else if (strstr(topic, "/control/sensor") != NULL) {
+    } else if (strstr(topic, sensor_control_pattern) != NULL) {
         // M701传感器控制（预留，当前传感器为只读）
         // 可以用于设置采样间隔、校准等（如果传感器支持）
-        ESP_LOGI(TAG, "Sensor control command: %.*s", len, msg_buf);
-    } else if (strstr(topic, "/query/sensor") != NULL) {
-        // 查询传感器数据
+        ESP_LOGI(TAG, "Sensor control command received");
+    } else if (strstr(topic, sensor_query_pattern) != NULL) {
+        // 查询传感器数据 - 匹配传感器SN
         m701_sensor_data_t sensor_data;
         if (m701_sensor_get_data(&sensor_data) == ESP_OK) {
             char json_buf[128];
             int json_len = m701_sensor_to_json(&sensor_data, json_buf, sizeof(json_buf));
             if (json_len > 0) {
-                mqtt_client_publish("sensor/data", (uint8_t*)json_buf, json_len, 1);
+                char sensor_topic[128];
+                snprintf(sensor_topic, sizeof(sensor_topic), "%s/data", SENSOR_SN);
+                mqtt_client_publish(sensor_topic, (uint8_t*)json_buf, json_len, 1);
             }
         }
     }
@@ -304,6 +320,14 @@ void app_main(void)
     ble_service_set_wifi_config_callback(on_wifi_config);
     ble_service_set_mqtt_config_callback(on_mqtt_config);
 
-    ESP_LOGI(TAG, "System ready! Servo:GPIO2, M701:GPIO3");
+    ESP_LOGI(TAG, "========================================");
+    ESP_LOGI(TAG, "System ready!");
+    ESP_LOGI(TAG, "Device SN:");
+    ESP_LOGI(TAG, "  LED Strip: %s", LED_STRIP_SN);
+    ESP_LOGI(TAG, "  Sensor:    %s", SENSOR_SN);
+    ESP_LOGI(TAG, "Hardware:");
+    ESP_LOGI(TAG, "  Servo: GPIO2");
+    ESP_LOGI(TAG, "  M701:  GPIO3");
     ESP_LOGI(TAG, "Use BLE to configure WiFi and MQTT");
+    ESP_LOGI(TAG, "========================================");
 }

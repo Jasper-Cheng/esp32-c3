@@ -57,13 +57,13 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base,
             s_status_callback(true);
         }
         
-        // 自动订阅控制主题
+        // 自动订阅控制主题（使用通配符匹配所有SN）
         char topic_buf[128];
-        snprintf(topic_buf, sizeof(topic_buf), "%s/control/+", s_config.prefix);
+        snprintf(topic_buf, sizeof(topic_buf), "%s/+/control", s_config.prefix);
         esp_mqtt_client_subscribe(client, topic_buf, 1);
         
-        // 订阅传感器查询主题
-        snprintf(topic_buf, sizeof(topic_buf), "%s/query/+", s_config.prefix);
+        // 订阅查询主题（使用通配符匹配所有SN）
+        snprintf(topic_buf, sizeof(topic_buf), "%s/+/query", s_config.prefix);
         esp_mqtt_client_subscribe(client, topic_buf, 1);
         
         // 订阅配置主题
