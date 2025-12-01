@@ -1,7 +1,14 @@
 /*
- * MQTT客户端 - 头文件
+ * MQTT客户端 - 头文件（可复用模块）
  * 
  * 功能：MQTT连接、发布、订阅
+ * 
+ * 使用说明：
+ * 1. 调用 mqtt_client_init(sn, callback, status_callback) 初始化，传入设备SN
+ * 2. 调用 mqtt_client_set_config(config) 配置MQTT服务器信息
+ * 3. 调用 mqtt_client_connect() 连接MQTT服务器
+ * 4. 连接成功后会自动订阅 {prefix}/{sn}/control 和 {prefix}/{sn}/query 主题
+ * 5. client_id自动生成为 jasper_{sn}（如果配置中未提供）
  */
 
 #ifndef MQTT_WRAPPER_H
@@ -41,13 +48,14 @@ typedef struct {
 /**
  * @brief 初始化MQTT客户端
  * 
+ * @param sn 设备序列号（用于生成client_id和订阅主题）
  * @param callback 消息接收回调函数
  * @param status_callback 连接状态回调函数
  * @return 
  *     - ESP_OK: 成功
  *     - ESP_FAIL: 失败
  */
-esp_err_t mqtt_client_init(mqtt_message_callback_t callback, mqtt_status_callback_t status_callback);
+esp_err_t mqtt_client_init(const char *sn, mqtt_message_callback_t callback, mqtt_status_callback_t status_callback);
 
 /**
  * @brief 配置MQTT连接参数

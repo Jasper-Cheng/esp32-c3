@@ -1,7 +1,12 @@
 /*
- * MQTT客户端 - 实现文件
+ * MQTT客户端 - 实现文件（可复用模块）
  * 
  * 功能：MQTT连接、发布、订阅
+ * 
+ * 特性：
+ * - 通过SN参数初始化，支持多设备复用
+ * - 自动生成client_id：jasper_{sn}
+ * - 自动订阅基于SN的主题：{prefix}/{sn}/control 和 {prefix}/{sn}/query
  */
 
 #include "mqtt_wrapper.h"
@@ -21,9 +26,7 @@ static esp_mqtt_client_handle_t s_mqtt_client = NULL;
 static mqtt_config_t s_config = {0};
 static bool s_connected = false;
 static bool s_configured = false;
-
-// 外部定义的SN（在hello_world_main.c中定义）
-extern const char SENSOR_SN[];
+static char s_sn[64] = {0};  // 保存设备序列号
 
 /**
  * @brief 获取客户端ID（包含SN作为唯一标识）
@@ -37,9 +40,15 @@ static void get_client_id(char *client_id, size_t len)
         return;
     }
     
-    // 自动生成包含SN的client_id格式：jasper_{SENSOR_SN}
+    // 自动生成包含SN的client_id格式：jasper_{SN}
     // 使用SN作为唯一标识，格式：jasper_M701001
-    snprintf(client_id, len, "jasper_%s", SENSOR_SN);
+    if (s_sn[0] != '\0') {
+        snprintf(client_id, len, "jasper_%s", s_sn);
+    } else {
+        // 如果SN未设置，使用默认值
+        strncpy(client_id, "jasper_unknown", len - 1);
+        client_id[len - 1] = '\0';
+    }
 }
 
 /**
@@ -59,14 +68,17 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base,
             s_status_callback(true);
         }
         
-        // 自动订阅控制主题（使用通配符匹配所有SN）
+        // 自动订阅控制主题（基于SN）
         char topic_buf[128];
-        snprintf(topic_buf, sizeof(topic_buf), "%s/+/control", s_config.prefix);
-        esp_mqtt_client_subscribe(client, topic_buf, 1);
-        
-        // 订阅查询主题（使用通配符匹配所有SN）
-        snprintf(topic_buf, sizeof(topic_buf), "%s/+/query", s_config.prefix);
-        esp_mqtt_client_subscribe(client, topic_buf, 1);
+        if (s_sn[0] != '\0') {
+            // 订阅当前SN的控制主题
+            snprintf(topic_buf, sizeof(topic_buf), "%s/%s/control", s_config.prefix, s_sn);
+            esp_mqtt_client_subscribe(client, topic_buf, 1);
+            
+            // 订阅查询主题（基于SN）
+            snprintf(topic_buf, sizeof(topic_buf), "%s/%s/query", s_config.prefix, s_sn);
+            esp_mqtt_client_subscribe(client, topic_buf, 1);
+        }
         
         // 订阅配置主题
         snprintf(topic_buf, sizeof(topic_buf), "%s/config", s_config.prefix);
@@ -123,9 +135,18 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base,
 /**
  * @brief 初始化MQTT客户端
  */
-esp_err_t mqtt_client_init(mqtt_message_callback_t callback, mqtt_status_callback_t status_callback)
+esp_err_t mqtt_client_init(const char *sn, mqtt_message_callback_t callback, mqtt_status_callback_t status_callback)
 {
-    ESP_LOGI(TAG, "Initializing MQTT client");
+    if (!sn || strlen(sn) == 0) {
+        ESP_LOGE(TAG, "Invalid SN parameter");
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    ESP_LOGI(TAG, "Initializing MQTT client with SN: %s", sn);
+    
+    // 保存SN
+    strncpy(s_sn, sn, sizeof(s_sn) - 1);
+    s_sn[sizeof(s_sn) - 1] = '\0';
     
     s_msg_callback = callback;
     s_status_callback = status_callback;

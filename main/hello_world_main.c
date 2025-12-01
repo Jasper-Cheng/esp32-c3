@@ -285,8 +285,8 @@ void app_main(void)
         return;
     }
 
-    // 5. 初始化MQTT客户端
-    ret = mqtt_client_init(on_mqtt_message, on_mqtt_status);
+    // 5. 初始化MQTT客户端（传入传感器SN）
+    ret = mqtt_client_init(SENSOR_SN, on_mqtt_message, on_mqtt_status);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "MQTT client init failed");
         return;
