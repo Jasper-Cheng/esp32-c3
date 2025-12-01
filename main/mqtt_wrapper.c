@@ -39,11 +39,7 @@ static void get_client_id(char *client_id, size_t len)
     
     // 自动生成包含SN的client_id格式：jasper_{SENSOR_SN}
     // 使用SN作为唯一标识，格式：jasper_M701001
-    // 如果需要更多唯一性，可以加上MAC地址
-    uint8_t mac[6];
-    esp_wifi_get_mac(WIFI_IF_STA, mac);
-    snprintf(client_id, len, "jasper_%s_%02x%02x%02x",
-             SENSOR_SN, mac[3], mac[4], mac[5]);
+    snprintf(client_id, len, "jasper_%s", SENSOR_SN);
 }
 
 /**
