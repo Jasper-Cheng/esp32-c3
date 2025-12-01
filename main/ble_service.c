@@ -527,3 +527,25 @@ void ble_service_set_mqtt_config_callback(ble_mqtt_config_callback_t callback)
 {
     g_mqtt_config_callback = callback;
 }
+
+/**
+ * @brief 停止BLE广播
+ * 
+ * 用于在WiFi连接时释放射频资源
+ */
+void ble_service_stop_advertising(void)
+{
+    ESP_LOGI(TAG, "Stopping BLE advertising");
+    esp_ble_gap_stop_advertising();
+}
+
+/**
+ * @brief 启动BLE广播
+ * 
+ * 用于在WiFi连接完成后恢复BLE广播
+ */
+void ble_service_start_advertising(void)
+{
+    ESP_LOGI(TAG, "Starting BLE advertising");
+    esp_ble_gap_start_advertising(&adv_params);
+}

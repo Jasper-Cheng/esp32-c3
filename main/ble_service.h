@@ -93,4 +93,18 @@ void ble_service_set_wifi_config_callback(ble_wifi_config_callback_t callback);
  */
 void ble_service_set_mqtt_config_callback(ble_mqtt_config_callback_t callback);
 
+/**
+ * @brief 停止BLE广播
+ * 
+ * 用于在WiFi连接时释放射频资源，避免共存冲突
+ */
+void ble_service_stop_advertising(void);
+
+/**
+ * @brief 启动BLE广播
+ * 
+ * 用于在WiFi连接完成后恢复BLE广播
+ */
+void ble_service_start_advertising(void);
+
 #endif // BLE_SERVICE_H

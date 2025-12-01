@@ -5,6 +5,7 @@
  */
 
 #include "wifi_manager.h"
+#include "ble_service.h"
 #include "esp_log.h"
 #include "esp_wifi.h"
 #include "esp_event.h"
@@ -138,6 +139,10 @@ esp_err_t wifi_manager_connect(const char *ssid, const char *password)
     
     ESP_LOGI(TAG, "Connecting to WiFi: %s", ssid);
     
+    // 停止BLE广播以释放射频资源，避免WiFi/BLE共存冲突
+    ble_service_stop_advertising();
+    vTaskDelay(pdMS_TO_TICKS(200)); // 等待200ms确保BLE完全停止
+    
     // 清除事件组
     xEventGroupClearBits(s_wifi_event_group, WIFI_CONNECTED_BIT | WIFI_FAIL_BIT);
     s_retry_num = 0;
@@ -162,13 +167,20 @@ esp_err_t wifi_manager_connect(const char *ssid, const char *password)
     
     if (bits & WIFI_CONNECTED_BIT) {
         ESP_LOGI(TAG, "WiFi connected successfully");
+        // WiFi连接成功后，延迟恢复BLE广播，以便用户可以继续通过BLE配置MQTT
+        // 延迟2秒确保WiFi连接稳定
+        vTaskDelay(pdMS_TO_TICKS(2000));
+        ble_service_start_advertising();
         return ESP_OK;
-    } else if (bits & WIFI_FAIL_BIT) {
-        ESP_LOGE(TAG, "WiFi connection failed");
-        return ESP_FAIL;
     } else {
-        ESP_LOGE(TAG, "WiFi connection timeout");
-        return ESP_ERR_TIMEOUT;
+        // 连接失败或超时，恢复BLE广播
+        ESP_LOGE(TAG, "WiFi connection failed, restoring BLE advertising");
+        ble_service_start_advertising();
+        if (bits & WIFI_FAIL_BIT) {
+            return ESP_FAIL;
+        } else {
+            return ESP_ERR_TIMEOUT;
+        }
     }
 }
 
