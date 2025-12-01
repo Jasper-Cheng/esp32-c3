@@ -62,6 +62,10 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base,
         snprintf(topic_buf, sizeof(topic_buf), "%s/control/+", s_config.prefix);
         esp_mqtt_client_subscribe(client, topic_buf, 1);
         
+        // 订阅传感器查询主题
+        snprintf(topic_buf, sizeof(topic_buf), "%s/query/+", s_config.prefix);
+        esp_mqtt_client_subscribe(client, topic_buf, 1);
+        
         // 订阅配置主题
         snprintf(topic_buf, sizeof(topic_buf), "%s/config", s_config.prefix);
         esp_mqtt_client_subscribe(client, topic_buf, 1);

@@ -121,9 +121,9 @@ static void on_mqtt_message(const char *topic, const uint8_t *data, int len)
     memcpy(msg_buf, data, copy_len);
     msg_buf[copy_len] = '\0';
     
-    ESP_LOGI(TAG, "MQTT message: topic=%s, data=%.*s", topic, len, msg_buf);
+    ESP_LOGI(TAG, "MQTT message received");
     
-    // 解析主题，判断是LED控制还是舵机控制
+    // 解析主题，判断是LED控制还是传感器控制
     if (strstr(topic, "/control/led") != NULL) {
         // LED控制
         uint8_t led_data[60] = {0};
@@ -137,11 +137,19 @@ static void on_mqtt_message(const char *topic, const uint8_t *data, int len)
         if (count > 0) {
             on_led_data_received(led_data);
         }
-    } else if (strstr(topic, "/control/servo") != NULL) {
-        // 舵机控制
-        float angle = 0.0f;
-        if (sscanf(msg_buf, "%f", &angle) == 1 && angle >= 0.0f && angle <= 270.0f) {
-            on_servo_angle_received(angle);
+    } else if (strstr(topic, "/control/sensor") != NULL) {
+        // M701传感器控制（预留，当前传感器为只读）
+        // 可以用于设置采样间隔、校准等（如果传感器支持）
+        ESP_LOGI(TAG, "Sensor control command: %.*s", len, msg_buf);
+    } else if (strstr(topic, "/query/sensor") != NULL) {
+        // 查询传感器数据
+        m701_sensor_data_t sensor_data;
+        if (m701_sensor_get_data(&sensor_data) == ESP_OK) {
+            char json_buf[128];
+            int json_len = m701_sensor_to_json(&sensor_data, json_buf, sizeof(json_buf));
+            if (json_len > 0) {
+                mqtt_client_publish("sensor/data", (uint8_t*)json_buf, json_len, 1);
+            }
         }
     }
 }
