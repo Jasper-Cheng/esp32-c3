@@ -68,25 +68,16 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base,
             s_status_callback(true);
         }
         
-        // 自动订阅控制主题（基于SN）
+        // 自动订阅控制主题（不包含SN）
         char topic_buf[128];
-        if (s_sn[0] != '\0') {
-            // 订阅当前SN的控制主题
-            snprintf(topic_buf, sizeof(topic_buf), "%s/%s/control", s_config.prefix, s_sn);
-            esp_mqtt_client_subscribe(client, topic_buf, 1);
-            
-            // 订阅查询主题（基于SN）
-            snprintf(topic_buf, sizeof(topic_buf), "%s/%s/query", s_config.prefix, s_sn);
-            esp_mqtt_client_subscribe(client, topic_buf, 1);
-        }
-        
-        // 订阅配置主题
-        snprintf(topic_buf, sizeof(topic_buf), "%s/config", s_config.prefix);
+        snprintf(topic_buf, sizeof(topic_buf), "%s/control", s_config.prefix);
         esp_mqtt_client_subscribe(client, topic_buf, 1);
         
-        // 发布在线状态
-        snprintf(topic_buf, sizeof(topic_buf), "%s/status", s_config.prefix);
-        esp_mqtt_client_publish(client, topic_buf, "online", 0, 1, 0);
+        // 发布在线状态（包含SN）
+        if (s_sn[0] != '\0') {
+            snprintf(topic_buf, sizeof(topic_buf), "%s/%s/status", s_config.prefix, s_sn);
+            esp_mqtt_client_publish(client, topic_buf, "online", 0, 1, 0);
+        }
         break;
         
     case MQTT_EVENT_DISCONNECTED:
@@ -257,10 +248,10 @@ esp_err_t mqtt_client_connect(void)
 esp_err_t mqtt_client_disconnect(void)
 {
     if (s_mqtt_client) {
-        // 发布离线状态
-        if (s_connected) {
+        // 发布离线状态（包含SN）
+        if (s_connected && s_sn[0] != '\0') {
             char topic[128];
-            snprintf(topic, sizeof(topic), "%s/status", s_config.prefix);
+            snprintf(topic, sizeof(topic), "%s/%s/status", s_config.prefix, s_sn);
             esp_mqtt_client_publish(s_mqtt_client, topic, "offline", 0, 1, 0);
         }
         

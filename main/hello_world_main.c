@@ -129,12 +129,12 @@ static void on_mqtt_message(const char *topic, const uint8_t *data, int len)
     
     ESP_LOGI(TAG, "MQTT message received");
     
-    // 解析主题，基于SN匹配（格式：{prefix}/{SN}/control 或 {prefix}/{SN}/query）
+    // 解析主题（格式：{prefix}/control
     char sensor_query_pattern[128];
     char sensor_control_pattern[128];
     
     snprintf(sensor_query_pattern, sizeof(sensor_query_pattern), "/%s/query", SENSOR_SN);
-    snprintf(sensor_control_pattern, sizeof(sensor_control_pattern), "/%s/control", SENSOR_SN);
+    snprintf(sensor_control_pattern, sizeof(sensor_control_pattern), "/control");
     
     if (strstr(topic, sensor_control_pattern) != NULL) {
         // M701传感器控制（预留，当前传感器为只读）
