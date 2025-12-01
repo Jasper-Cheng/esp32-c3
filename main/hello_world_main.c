@@ -36,8 +36,8 @@
 static const char* TAG = "MAIN";
 
 /* 设备SN定义（唯一标识） */
-#define LED_STRIP_SN       "LED001"      // 灯带序列号
-#define SENSOR_SN          "M701001"     // M701传感器序列号
+// SN定义（需要在mqtt_wrapper.c中extern引用）
+const char SENSOR_SN[] = "M701001";        // M701传感器序列号
 
 /**
  * @brief LED数据接收回调函数
@@ -130,28 +130,13 @@ static void on_mqtt_message(const char *topic, const uint8_t *data, int len)
     ESP_LOGI(TAG, "MQTT message received");
     
     // 解析主题，基于SN匹配（格式：{prefix}/{SN}/control 或 {prefix}/{SN}/query）
-    char led_control_pattern[128];
     char sensor_query_pattern[128];
     char sensor_control_pattern[128];
     
-    snprintf(led_control_pattern, sizeof(led_control_pattern), "/%s/control", LED_STRIP_SN);
     snprintf(sensor_query_pattern, sizeof(sensor_query_pattern), "/%s/query", SENSOR_SN);
     snprintf(sensor_control_pattern, sizeof(sensor_control_pattern), "/%s/control", SENSOR_SN);
     
-    if (strstr(topic, led_control_pattern) != NULL) {
-        // LED控制 - 匹配LED SN
-        uint8_t led_data[60] = {0};
-        int count = 0;
-        for (int i = 0; i < len && count < 60; i++) {
-            char c = msg_buf[i];
-            if (c >= '0' && c <= '7') {
-                led_data[count++] = (uint8_t)(c - '0');
-            }
-        }
-        if (count > 0) {
-            on_led_data_received(led_data);
-        }
-    } else if (strstr(topic, sensor_control_pattern) != NULL) {
+    if (strstr(topic, sensor_control_pattern) != NULL) {
         // M701传感器控制（预留，当前传感器为只读）
         // 可以用于设置采样间隔、校准等（如果传感器支持）
         ESP_LOGI(TAG, "Sensor control command received");
@@ -221,7 +206,12 @@ static void on_mqtt_config(const char *config_json)
     if (item && cJSON_IsString(item)) {
         strncpy(mqtt_cfg.prefix, item->valuestring, sizeof(mqtt_cfg.prefix) - 1);
     } else {
-        strcpy(mqtt_cfg.prefix, "jasper-c3");
+        strcpy(mqtt_cfg.prefix, "jasper");
+    }
+    
+    item = cJSON_GetObjectItem(json, "client_id");
+    if (item && cJSON_IsString(item)) {
+        strncpy(mqtt_cfg.client_id, item->valuestring, sizeof(mqtt_cfg.client_id) - 1);
     }
     
     cJSON_Delete(json);
@@ -323,8 +313,7 @@ void app_main(void)
     ESP_LOGI(TAG, "========================================");
     ESP_LOGI(TAG, "System ready!");
     ESP_LOGI(TAG, "Device SN:");
-    ESP_LOGI(TAG, "  LED Strip: %s", LED_STRIP_SN);
-    ESP_LOGI(TAG, "  Sensor:    %s", SENSOR_SN);
+    ESP_LOGI(TAG, "  Sensor SN: %s", SENSOR_SN);
     ESP_LOGI(TAG, "Hardware:");
     ESP_LOGI(TAG, "  Servo: GPIO2");
     ESP_LOGI(TAG, "  M701:  GPIO3");

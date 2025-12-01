@@ -22,22 +22,28 @@ static mqtt_config_t s_config = {0};
 static bool s_connected = false;
 static bool s_configured = false;
 
+// 外部定义的SN（在hello_world_main.c中定义）
+extern const char SENSOR_SN[];
+
 /**
- * @brief 获取设备MAC地址作为客户端ID
+ * @brief 获取客户端ID（包含SN作为唯一标识）
  */
 static void get_client_id(char *client_id, size_t len)
 {
     if (s_config.client_id[0] != '\0') {
+        // 如果配置中提供了client_id，直接使用
         strncpy(client_id, s_config.client_id, len - 1);
         client_id[len - 1] = '\0';
         return;
     }
     
-    // 使用MAC地址作为默认客户端ID
+    // 自动生成包含SN的client_id格式：jasper_{SENSOR_SN}
+    // 使用SN作为唯一标识，格式：jasper_M701001
+    // 如果需要更多唯一性，可以加上MAC地址
     uint8_t mac[6];
     esp_wifi_get_mac(WIFI_IF_STA, mac);
-    snprintf(client_id, len, "jasper_%02x%02x%02x%02x%02x%02x",
-             mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+    snprintf(client_id, len, "jasper_%s_%02x%02x%02x",
+             SENSOR_SN, mac[3], mac[4], mac[5]);
 }
 
 /**
@@ -150,7 +156,7 @@ esp_err_t mqtt_client_set_config(const mqtt_config_t *config)
         s_config.port = 1883;
     }
     if (strlen(s_config.prefix) == 0) {
-        strcpy(s_config.prefix, "jasper-c3");
+        strcpy(s_config.prefix, "jasper");
     }
     
     s_configured = true;
