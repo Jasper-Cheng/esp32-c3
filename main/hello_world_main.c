@@ -82,11 +82,17 @@ static void on_sensor_data_received(const m701_sensor_data_t *data)
         // 通过BLE发送
         ble_service_notify_sensor_data(json_buf, len);
         
-        // 通过MQTT发布（使用传感器SN）
+        // 通过MQTT发布（主题不包含SN，数据中包含SN）
         if (mqtt_client_is_connected()) {
-            char sensor_topic[128];
-            snprintf(sensor_topic, sizeof(sensor_topic), "%s/data", SENSOR_SN);
-            mqtt_client_publish(sensor_topic, (uint8_t*)json_buf, len, 1);
+            // 在JSON中添加SN字段
+            char json_with_sn[160];
+            // 解析现有JSON并添加sn字段
+            // 简单方法：在最后一个}之前插入sn字段
+            int sn_len = snprintf(json_with_sn, sizeof(json_with_sn),
+                "{\"sn\":\"%s\",%.*s}", SENSOR_SN, len - 1, json_buf + 1);
+            if (sn_len > 0 && sn_len < sizeof(json_with_sn)) {
+                mqtt_client_publish("data", (uint8_t*)json_with_sn, sn_len, 1);
+            }
         }
     }
 }
@@ -129,7 +135,7 @@ static void on_mqtt_message(const char *topic, const uint8_t *data, int len)
     
     ESP_LOGI(TAG, "MQTT message received");
     
-    // 解析主题（格式：{prefix}/control
+    // 解析主题（格式：jasper/control
     char sensor_query_pattern[128];
     char sensor_control_pattern[128];
     
@@ -147,9 +153,13 @@ static void on_mqtt_message(const char *topic, const uint8_t *data, int len)
             char json_buf[128];
             int json_len = m701_sensor_to_json(&sensor_data, json_buf, sizeof(json_buf));
             if (json_len > 0) {
-                char sensor_topic[128];
-                snprintf(sensor_topic, sizeof(sensor_topic), "%s/data", SENSOR_SN);
-                mqtt_client_publish(sensor_topic, (uint8_t*)json_buf, json_len, 1);
+                // 在JSON中添加SN字段（主题不包含SN，数据中包含SN）
+                char json_with_sn[160];
+                int sn_len = snprintf(json_with_sn, sizeof(json_with_sn),
+                    "{\"sn\":\"%s\",%.*s}", SENSOR_SN, json_len - 1, json_buf + 1);
+                if (sn_len > 0 && sn_len < sizeof(json_with_sn)) {
+                    mqtt_client_publish("data", (uint8_t*)json_with_sn, sn_len, 1);
+                }
             }
         }
     }
@@ -200,13 +210,6 @@ static void on_mqtt_config(const char *config_json)
     item = cJSON_GetObjectItem(json, "password");
     if (item && cJSON_IsString(item)) {
         strncpy(mqtt_cfg.password, item->valuestring, sizeof(mqtt_cfg.password) - 1);
-    }
-    
-    item = cJSON_GetObjectItem(json, "prefix");
-    if (item && cJSON_IsString(item)) {
-        strncpy(mqtt_cfg.prefix, item->valuestring, sizeof(mqtt_cfg.prefix) - 1);
-    } else {
-        strcpy(mqtt_cfg.prefix, "jasper");
     }
     
     item = cJSON_GetObjectItem(json, "client_id");

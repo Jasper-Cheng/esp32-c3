@@ -6,7 +6,7 @@
  * 特性：
  * - 通过SN参数初始化，支持多设备复用
  * - 自动生成client_id：jasper_{sn}
- * - 自动订阅基于SN的主题：{prefix}/{sn}/control 和 {prefix}/{sn}/query
+ * - 自动订阅控制主题：jasper/control（固定前缀jasper）
  */
 
 #include "mqtt_wrapper.h"
@@ -68,15 +68,17 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base,
             s_status_callback(true);
         }
         
-        // 自动订阅控制主题（不包含SN）
+        // 自动订阅控制主题（不包含SN，固定前缀jasper）
         char topic_buf[128];
-        snprintf(topic_buf, sizeof(topic_buf), "%s/control", s_config.prefix);
+        snprintf(topic_buf, sizeof(topic_buf), "jasper/control");
         esp_mqtt_client_subscribe(client, topic_buf, 1);
         
-        // 发布在线状态（包含SN）
+        // 发布在线状态（主题不包含SN，数据中包含SN，固定前缀jasper）
         if (s_sn[0] != '\0') {
-            snprintf(topic_buf, sizeof(topic_buf), "%s/%s/status", s_config.prefix, s_sn);
-            esp_mqtt_client_publish(client, topic_buf, "online", 0, 1, 0);
+            snprintf(topic_buf, sizeof(topic_buf), "jasper/status");
+            char status_json[128];
+            snprintf(status_json, sizeof(status_json), "{\"sn\":\"%s\",\"status\":\"online\"}", s_sn);
+            esp_mqtt_client_publish(client, topic_buf, status_json, strlen(status_json), 1, 0);
         }
         break;
         
@@ -163,9 +165,6 @@ esp_err_t mqtt_client_set_config(const mqtt_config_t *config)
     if (s_config.port == 0) {
         s_config.port = 1883;
     }
-    if (strlen(s_config.prefix) == 0) {
-        strcpy(s_config.prefix, "jasper");
-    }
     
     s_configured = true;
     ESP_LOGI(TAG, "MQTT config set");
@@ -248,11 +247,13 @@ esp_err_t mqtt_client_connect(void)
 esp_err_t mqtt_client_disconnect(void)
 {
     if (s_mqtt_client) {
-        // 发布离线状态（包含SN）
+        // 发布离线状态（主题不包含SN，数据中包含SN，固定前缀jasper）
         if (s_connected && s_sn[0] != '\0') {
             char topic[128];
-            snprintf(topic, sizeof(topic), "%s/%s/status", s_config.prefix, s_sn);
-            esp_mqtt_client_publish(s_mqtt_client, topic, "offline", 0, 1, 0);
+            snprintf(topic, sizeof(topic), "jasper/status");
+            char status_json[128];
+            snprintf(status_json, sizeof(status_json), "{\"sn\":\"%s\",\"status\":\"offline\"}", s_sn);
+            esp_mqtt_client_publish(s_mqtt_client, topic, status_json, strlen(status_json), 1, 0);
         }
         
         esp_mqtt_client_stop(s_mqtt_client);
@@ -274,7 +275,7 @@ esp_err_t mqtt_client_publish(const char *topic, const uint8_t *data, int len, i
     }
     
     char full_topic[128];
-    snprintf(full_topic, sizeof(full_topic), "%s/%s", s_config.prefix, topic);
+    snprintf(full_topic, sizeof(full_topic), "jasper/%s", topic);
     
     int msg_id = esp_mqtt_client_publish(s_mqtt_client, full_topic, (const char*)data, len, qos, 0);
     if (msg_id < 0) {
@@ -295,7 +296,7 @@ esp_err_t mqtt_client_subscribe(const char *topic, int qos)
     }
     
     char full_topic[128];
-    snprintf(full_topic, sizeof(full_topic), "%s/%s", s_config.prefix, topic);
+    snprintf(full_topic, sizeof(full_topic), "jasper/%s", topic);
     
     int msg_id = esp_mqtt_client_subscribe(s_mqtt_client, full_topic, qos);
     if (msg_id < 0) {
@@ -323,7 +324,7 @@ const char* mqtt_client_get_full_topic(const char *relative_topic, char *full_to
         return NULL;
     }
     
-    snprintf(full_topic, buf_size, "%s/%s", s_config.prefix, relative_topic);
+    snprintf(full_topic, buf_size, "jasper/%s", relative_topic);
     return full_topic;
 }
 
