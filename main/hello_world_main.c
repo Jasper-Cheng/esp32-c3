@@ -82,7 +82,7 @@ static void on_sensor_data_received(const m701_sensor_data_t *data)
         // 通过BLE发送
         ble_service_notify_sensor_data(json_buf, len);
         
-        // 通过MQTT发布（主题不包含SN，数据中包含SN）
+        // 通过MQTT发布（格式：device/{sn}/data，数据中包含SN）
         if (mqtt_client_is_connected()) {
             // 在JSON中添加SN字段
             char json_with_sn[160];
@@ -135,12 +135,12 @@ static void on_mqtt_message(const char *topic, const uint8_t *data, int len)
     
     ESP_LOGI(TAG, "MQTT message received");
     
-    // 解析主题（格式：jasper/control
+    // 解析主题（格式：device/{sn}/control
     char sensor_query_pattern[128];
     char sensor_control_pattern[128];
     
     snprintf(sensor_query_pattern, sizeof(sensor_query_pattern), "/%s/query", SENSOR_SN);
-    snprintf(sensor_control_pattern, sizeof(sensor_control_pattern), "/control");
+    snprintf(sensor_control_pattern, sizeof(sensor_control_pattern), "device/%s/control", SENSOR_SN);
     
     if (strstr(topic, sensor_control_pattern) != NULL) {
         // M701传感器控制（预留，当前传感器为只读）
@@ -153,7 +153,7 @@ static void on_mqtt_message(const char *topic, const uint8_t *data, int len)
             char json_buf[128];
             int json_len = m701_sensor_to_json(&sensor_data, json_buf, sizeof(json_buf));
             if (json_len > 0) {
-                // 在JSON中添加SN字段（主题不包含SN，数据中包含SN）
+                // 在JSON中添加SN字段（格式：device/{sn}/data，数据中包含SN）
                 char json_with_sn[160];
                 int sn_len = snprintf(json_with_sn, sizeof(json_with_sn),
                     "{\"sn\":\"%s\",%.*s}", SENSOR_SN, json_len - 1, json_buf + 1);

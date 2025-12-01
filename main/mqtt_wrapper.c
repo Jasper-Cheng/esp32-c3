@@ -6,7 +6,7 @@
  * 特性：
  * - 通过SN参数初始化，支持多设备复用
  * - 自动生成client_id：jasper_{sn}
- * - 自动订阅控制主题：jasper/control（固定前缀jasper）
+ * - 自动订阅控制主题：device/{sn}/control
  */
 
 #include "mqtt_wrapper.h"
@@ -68,14 +68,14 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base,
             s_status_callback(true);
         }
         
-        // 自动订阅控制主题（不包含SN，固定前缀jasper）
+        // 自动订阅控制主题（格式：device/{sn}/control）
         char topic_buf[128];
-        snprintf(topic_buf, sizeof(topic_buf), "jasper/control");
-        esp_mqtt_client_subscribe(client, topic_buf, 1);
-        
-        // 发布在线状态（主题不包含SN，数据中包含SN，固定前缀jasper）
         if (s_sn[0] != '\0') {
-            snprintf(topic_buf, sizeof(topic_buf), "jasper/status");
+            snprintf(topic_buf, sizeof(topic_buf), "device/%s/control", s_sn);
+            esp_mqtt_client_subscribe(client, topic_buf, 1);
+            
+            // 发布在线状态（格式：device/{sn}/status）
+            snprintf(topic_buf, sizeof(topic_buf), "device/%s/status", s_sn);
             char status_json[128];
             snprintf(status_json, sizeof(status_json), "{\"sn\":\"%s\",\"status\":\"online\"}", s_sn);
             esp_mqtt_client_publish(client, topic_buf, status_json, strlen(status_json), 1, 0);
@@ -247,10 +247,10 @@ esp_err_t mqtt_client_connect(void)
 esp_err_t mqtt_client_disconnect(void)
 {
     if (s_mqtt_client) {
-        // 发布离线状态（主题不包含SN，数据中包含SN，固定前缀jasper）
+        // 发布离线状态（格式：device/{sn}/status）
         if (s_connected && s_sn[0] != '\0') {
             char topic[128];
-            snprintf(topic, sizeof(topic), "jasper/status");
+            snprintf(topic, sizeof(topic), "device/%s/status", s_sn);
             char status_json[128];
             snprintf(status_json, sizeof(status_json), "{\"sn\":\"%s\",\"status\":\"offline\"}", s_sn);
             esp_mqtt_client_publish(s_mqtt_client, topic, status_json, strlen(status_json), 1, 0);
@@ -275,7 +275,11 @@ esp_err_t mqtt_client_publish(const char *topic, const uint8_t *data, int len, i
     }
     
     char full_topic[128];
-    snprintf(full_topic, sizeof(full_topic), "jasper/%s", topic);
+    if (s_sn[0] != '\0') {
+        snprintf(full_topic, sizeof(full_topic), "device/%s/%s", s_sn, topic);
+    } else {
+        snprintf(full_topic, sizeof(full_topic), "device/unknown/%s", topic);
+    }
     
     int msg_id = esp_mqtt_client_publish(s_mqtt_client, full_topic, (const char*)data, len, qos, 0);
     if (msg_id < 0) {
@@ -296,7 +300,11 @@ esp_err_t mqtt_client_subscribe(const char *topic, int qos)
     }
     
     char full_topic[128];
-    snprintf(full_topic, sizeof(full_topic), "jasper/%s", topic);
+    if (s_sn[0] != '\0') {
+        snprintf(full_topic, sizeof(full_topic), "device/%s/%s", s_sn, topic);
+    } else {
+        snprintf(full_topic, sizeof(full_topic), "device/unknown/%s", topic);
+    }
     
     int msg_id = esp_mqtt_client_subscribe(s_mqtt_client, full_topic, qos);
     if (msg_id < 0) {
@@ -324,7 +332,11 @@ const char* mqtt_client_get_full_topic(const char *relative_topic, char *full_to
         return NULL;
     }
     
-    snprintf(full_topic, buf_size, "jasper/%s", relative_topic);
+    if (s_sn[0] != '\0') {
+        snprintf(full_topic, buf_size, "device/%s/%s", s_sn, relative_topic);
+    } else {
+        snprintf(full_topic, buf_size, "device/unknown/%s", relative_topic);
+    }
     return full_topic;
 }
 

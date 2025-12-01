@@ -7,7 +7,7 @@
  * 1. 调用 mqtt_client_init(sn, callback, status_callback) 初始化，传入设备SN
  * 2. 调用 mqtt_client_set_config(config) 配置MQTT服务器信息
  * 3. 调用 mqtt_client_connect() 连接MQTT服务器
- * 4. 连接成功后会自动订阅 jasper/control 主题（固定前缀jasper）
+ * 4. 连接成功后会自动订阅 device/{sn}/control 主题
  * 5. client_id自动生成为 jasper_{sn}（如果配置中未提供）
  */
 
