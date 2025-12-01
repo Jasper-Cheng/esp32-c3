@@ -34,7 +34,7 @@ typedef struct {
     uint16_t port;         // 端口（默认1883）
     char username[64];     // 用户名（可选）
     char password[64];     // 密码（可选）
-    char client_id[64];    // 客户端ID（可选，默认使用MAC地址）
+    char client_id[64];    // 客户端ID（必传，jasper_{sn}）
     char prefix[64];       // 主题前缀（如 "jasper-c3"）
 } mqtt_config_t;
 
