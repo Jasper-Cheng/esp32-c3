@@ -13,6 +13,8 @@
 #include "esp_log.h"
 #include "esp_wifi.h"
 #include "mqtt_client.h"  // ESP-IDF的MQTT客户端头文件（通过mqtt组件提供）
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include <string.h>
 #include <stdio.h>
 
@@ -27,6 +29,8 @@ static mqtt_config_t s_config = {0};
 static bool s_connected = false;
 static bool s_configured = false;
 static char s_sn[64] = {0};  // 保存设备序列号
+static char s_lwt_topic[128] = {0};  // LWT主题
+static char s_lwt_message[128] = {0};  // LWT消息
 
 /**
  * @brief 获取客户端ID（包含SN作为唯一标识）
@@ -262,12 +266,32 @@ esp_err_t mqtt_client_connect(void)
     ESP_LOGI(TAG, "Connecting to MQTT broker: %s (client_id=%s)", uri, client_id);
     
     // 配置MQTT客户端
-    esp_mqtt_client_config_t mqtt_cfg = {
-        .broker.address.uri = uri,
-        .credentials.client_id = client_id,
-        .session.keepalive = 60,
-        .session.disable_clean_session = false,
-    };
+    esp_mqtt_client_config_t mqtt_cfg = {0};
+    
+    // 配置基本连接参数
+    mqtt_cfg.broker.address.uri = uri;
+    mqtt_cfg.credentials.client_id = client_id;
+    // 缩短keepalive时间，让LWT更快触发（30秒，服务器会在约45秒后触发LWT）
+    mqtt_cfg.session.keepalive = 30;
+    mqtt_cfg.session.disable_clean_session = false;
+    
+    // 配置LWT遗嘱（Last Will and Testament）
+    // 当客户端异常断开时，MQTT服务器会自动发布此消息
+    // 注意：LWT需要等待keepalive超时（约1.5倍keepalive时间）才会触发
+    if (s_sn[0] != '\0') {
+        snprintf(s_lwt_topic, sizeof(s_lwt_topic), "device/%s/status", s_sn);
+        snprintf(s_lwt_message, sizeof(s_lwt_message), "{\"sn\":\"%s\",\"status\":\"offline\"}", s_sn);
+        
+        mqtt_cfg.session.last_will.topic = s_lwt_topic;
+        mqtt_cfg.session.last_will.msg = s_lwt_message;
+        mqtt_cfg.session.last_will.msg_len = strlen(s_lwt_message);
+        mqtt_cfg.session.last_will.qos = 1;
+        mqtt_cfg.session.last_will.retain = 0;  // 不保留消息
+        
+        ESP_LOGI(TAG, "LWT configured: topic=%s, message=%s, keepalive=%d (LWT will trigger after ~%d seconds)", 
+                s_lwt_topic, s_lwt_message, mqtt_cfg.session.keepalive, 
+                (int)(mqtt_cfg.session.keepalive * 1.5));
+    }
     
     s_mqtt_client = esp_mqtt_client_init(&mqtt_cfg);
     if (!s_mqtt_client) {
@@ -297,22 +321,33 @@ esp_err_t mqtt_client_disconnect(void)
 {
     if (s_mqtt_client) {
         // 发布离线状态（格式：device/{sn}/status）
+        // 在断开前主动发送离线消息，确保服务器收到
         if (s_connected && s_sn[0] != '\0') {
             char topic[128];
             snprintf(topic, sizeof(topic), "device/%s/status", s_sn);
             char status_json[128];
             snprintf(status_json, sizeof(status_json), "{\"sn\":\"%s\",\"status\":\"offline\"}", s_sn);
+            
+            // 使用QoS 1发布，确保消息至少被服务器接收一次
             int msg_id = esp_mqtt_client_publish(s_mqtt_client, topic, status_json, strlen(status_json), 1, 0);
             if (msg_id >= 0) {
                 ESP_LOGI(TAG, "Published offline status to topic: %s, payload: %s (msg_id=%d)", 
                         topic, status_json, msg_id);
+                
+                // 等待消息发送完成（QoS 1需要等待PUBACK）
+                // 给足够的时间让消息发送和确认
+                vTaskDelay(pdMS_TO_TICKS(500));
             } else {
                 ESP_LOGW(TAG, "Failed to publish offline status to topic: %s", topic);
             }
         }
         
         ESP_LOGI(TAG, "Disconnecting MQTT client");
+        // 先停止客户端（会发送DISCONNECT包）
         esp_mqtt_client_stop(s_mqtt_client);
+        // 等待断开完成
+        vTaskDelay(pdMS_TO_TICKS(100));
+        // 销毁客户端
         esp_mqtt_client_destroy(s_mqtt_client);
         s_mqtt_client = NULL;
         s_connected = false;

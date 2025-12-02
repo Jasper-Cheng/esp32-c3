@@ -25,6 +25,7 @@
 #include "esp_system.h"
 #include "esp_log.h"
 #include "nvs_flash.h"
+#include "nvs.h"
 
 #include "ble_service.h"
 #include "ws2812_driver.h"
@@ -40,6 +41,14 @@ static const char* TAG = "MAIN";
 /* MQTT配置队列 */
 #define MQTT_CONFIG_QUEUE_SIZE 5
 static QueueHandle_t s_mqtt_config_queue = NULL;
+
+/* NVS命名空间 */
+#define NVS_NAMESPACE "mqtt_config"
+#define NVS_KEY_MQTT_CONFIG "mqtt_cfg"
+
+/* 前向声明 */
+static esp_err_t load_mqtt_config_from_nvs(char *config_json, size_t max_len);
+static void process_mqtt_config(const char *config_json);
 
 /* 设备SN定义（唯一标识） */
 // SN定义（需要在mqtt_wrapper.c中extern引用）
@@ -118,7 +127,31 @@ static void on_wifi_status(bool connected, const char *ip_addr)
     if (connected) {
         ESP_LOGI(TAG, "WiFi connected, IP: %s", ip_addr);
         // WiFi连接成功后，如果MQTT已配置则自动连接
-        // MQTT连接在配置回调中处理
+        // 通过队列发送，避免在回调中执行耗时操作
+        
+        if (s_mqtt_config_queue) {
+            // 尝试从NVS加载MQTT配置
+            char config_json[512] = {0};
+            esp_err_t ret = load_mqtt_config_from_nvs(config_json, sizeof(config_json));
+            if (ret == ESP_OK) {
+                ESP_LOGI(TAG, "Auto-connecting MQTT with saved config");
+                // 分配内存并发送到队列
+                char *config_copy = malloc(strlen(config_json) + 1);
+                if (config_copy) {
+                    strcpy(config_copy, config_json);
+                    if (xQueueSend(s_mqtt_config_queue, &config_copy, pdMS_TO_TICKS(1000)) != pdTRUE) {
+                        ESP_LOGE(TAG, "Failed to send MQTT config to queue");
+                        free(config_copy);
+                    }
+                } else {
+                    ESP_LOGE(TAG, "Failed to allocate memory for MQTT config");
+                }
+            } else if (ret == ESP_ERR_NVS_NOT_FOUND) {
+                ESP_LOGI(TAG, "No saved MQTT config found in NVS, waiting for BLE configuration");
+            } else {
+                ESP_LOGW(TAG, "Failed to load MQTT config from NVS: %s", esp_err_to_name(ret));
+            }
+        }
     } else {
         ESP_LOGI(TAG, "WiFi disconnected");
     }
@@ -212,6 +245,64 @@ static void on_mqtt_config(const char *config_json)
 }
 
 /**
+ * @brief 保存MQTT配置到NVS
+ */
+static esp_err_t save_mqtt_config_to_nvs(const char *config_json)
+{
+    nvs_handle_t nvs_handle;
+    esp_err_t ret = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs_handle);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to open NVS: %s", esp_err_to_name(ret));
+        return ret;
+    }
+    
+    ret = nvs_set_str(nvs_handle, NVS_KEY_MQTT_CONFIG, config_json);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to save MQTT config to NVS: %s", esp_err_to_name(ret));
+        nvs_close(nvs_handle);
+        return ret;
+    }
+    
+    ret = nvs_commit(nvs_handle);
+    nvs_close(nvs_handle);
+    
+    if (ret == ESP_OK) {
+        ESP_LOGI(TAG, "MQTT config saved to NVS");
+    } else {
+        ESP_LOGE(TAG, "Failed to commit NVS: %s", esp_err_to_name(ret));
+    }
+    
+    return ret;
+}
+
+/**
+ * @brief 从NVS加载MQTT配置
+ */
+static esp_err_t load_mqtt_config_from_nvs(char *config_json, size_t max_len)
+{
+    nvs_handle_t nvs_handle;
+    esp_err_t ret = nvs_open(NVS_NAMESPACE, NVS_READONLY, &nvs_handle);
+    if (ret != ESP_OK) {
+        ESP_LOGI(TAG, "Failed to open NVS namespace '%s' (may not exist): %s", NVS_NAMESPACE, esp_err_to_name(ret));
+        return ret;
+    }
+    
+    size_t required_size = max_len;
+    ret = nvs_get_str(nvs_handle, NVS_KEY_MQTT_CONFIG, config_json, &required_size);
+    nvs_close(nvs_handle);
+    
+    if (ret == ESP_OK) {
+        ESP_LOGI(TAG, "MQTT config loaded from NVS: %s", config_json);
+    } else if (ret == ESP_ERR_NVS_NOT_FOUND) {
+        ESP_LOGI(TAG, "No MQTT config found in NVS (key: %s)", NVS_KEY_MQTT_CONFIG);
+    } else {
+        ESP_LOGE(TAG, "Failed to load MQTT config from NVS: %s", esp_err_to_name(ret));
+    }
+    
+    return ret;
+}
+
+/**
  * @brief 处理MQTT配置（在主任务中执行）
  */
 static void process_mqtt_config(const char *config_json)
@@ -248,7 +339,13 @@ static void process_mqtt_config(const char *config_json)
     
     // 配置并连接MQTT
     if (strlen(mqtt_cfg.broker) > 0) {
+        // 保存配置到NVS
+        save_mqtt_config_to_nvs(config_json);
+        
+        // 设置MQTT配置
         mqtt_client_set_config(&mqtt_cfg);
+        
+        // 如果WiFi已连接，立即连接MQTT
         if (wifi_manager_is_connected()) {
             mqtt_client_connect();
         } else {
@@ -369,6 +466,30 @@ void app_main(void)
     ble_service_set_wifi_config_callback(on_wifi_config);
     ble_service_set_mqtt_config_callback(on_mqtt_config);
 
+    // 11. 如果WiFi已连接，尝试自动加载并连接MQTT（通过队列）
+    if (wifi_manager_is_connected()) {
+        ESP_LOGI(TAG, "WiFi already connected, checking for saved MQTT config...");
+        char config_json[512] = {0};
+        if (load_mqtt_config_from_nvs(config_json, sizeof(config_json)) == ESP_OK) {
+            ESP_LOGI(TAG, "Auto-connecting MQTT with saved config");
+            // 延迟一下确保系统稳定
+            vTaskDelay(pdMS_TO_TICKS(2000));
+            // 通过队列发送，由mqtt_config_task处理
+            char *config_copy = malloc(strlen(config_json) + 1);
+            if (config_copy) {
+                strcpy(config_copy, config_json);
+                if (xQueueSend(s_mqtt_config_queue, &config_copy, pdMS_TO_TICKS(1000)) != pdTRUE) {
+                    ESP_LOGE(TAG, "Failed to send MQTT config to queue");
+                    free(config_copy);
+                }
+            } else {
+                ESP_LOGE(TAG, "Failed to allocate memory for MQTT config");
+            }
+        } else {
+            ESP_LOGI(TAG, "No saved MQTT config found, waiting for BLE configuration");
+        }
+    }
+
     ESP_LOGI(TAG, "========================================");
     ESP_LOGI(TAG, "System ready!");
     ESP_LOGI(TAG, "Device SN:");
@@ -377,5 +498,6 @@ void app_main(void)
     ESP_LOGI(TAG, "  Servo: GPIO2");
     ESP_LOGI(TAG, "  M701:  GPIO3");
     ESP_LOGI(TAG, "Use BLE to configure WiFi and MQTT");
+    ESP_LOGI(TAG, "MQTT config will be auto-loaded on restart");
     ESP_LOGI(TAG, "========================================");
 }
