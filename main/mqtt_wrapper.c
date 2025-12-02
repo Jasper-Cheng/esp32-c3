@@ -71,14 +71,17 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base,
         // 自动订阅控制主题（格式：device/{sn}/control）
         char topic_buf[128];
         if (s_sn[0] != '\0') {
+            // 订阅控制主题
             snprintf(topic_buf, sizeof(topic_buf), "device/%s/control", s_sn);
-            esp_mqtt_client_subscribe(client, topic_buf, 1);
+            int sub_msg_id = esp_mqtt_client_subscribe(client, topic_buf, 1);
+            ESP_LOGI(TAG, "Subscribed to topic: %s (msg_id=%d)", topic_buf, sub_msg_id);
             
             // 发布在线状态（格式：device/{sn}/status）
             snprintf(topic_buf, sizeof(topic_buf), "device/%s/status", s_sn);
             char status_json[128];
             snprintf(status_json, sizeof(status_json), "{\"sn\":\"%s\",\"status\":\"online\"}", s_sn);
-            esp_mqtt_client_publish(client, topic_buf, status_json, strlen(status_json), 1, 0);
+            int pub_msg_id = esp_mqtt_client_publish(client, topic_buf, status_json, strlen(status_json), 1, 0);
+            ESP_LOGI(TAG, "Published to topic: %s, payload: %s (msg_id=%d)", topic_buf, status_json, pub_msg_id);
         }
         break;
         
@@ -91,28 +94,74 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base,
         break;
         
     case MQTT_EVENT_SUBSCRIBED:
-        ESP_LOGI(TAG, "MQTT subscribed, msg_id=%d", event->msg_id);
+        {
+            char topic[128] = {0};
+            if (event->topic_len > 0 && event->topic_len < sizeof(topic)) {
+                memcpy(topic, event->topic, event->topic_len);
+                topic[event->topic_len] = '\0';
+                ESP_LOGI(TAG, "Subscribed to topic: %s (msg_id=%d)", topic, event->msg_id);
+            } else {
+                ESP_LOGI(TAG, "MQTT subscribed (msg_id=%d)", event->msg_id);
+            }
+        }
         break;
         
     case MQTT_EVENT_UNSUBSCRIBED:
-        ESP_LOGI(TAG, "MQTT unsubscribed, msg_id=%d", event->msg_id);
+        {
+            char topic[128] = {0};
+            if (event->topic_len > 0 && event->topic_len < sizeof(topic)) {
+                memcpy(topic, event->topic, event->topic_len);
+                topic[event->topic_len] = '\0';
+                ESP_LOGI(TAG, "Unsubscribed from topic: %s (msg_id=%d)", topic, event->msg_id);
+            } else {
+                ESP_LOGI(TAG, "MQTT unsubscribed (msg_id=%d)", event->msg_id);
+            }
+        }
         break;
         
     case MQTT_EVENT_PUBLISHED:
-        ESP_LOGI(TAG, "MQTT published, msg_id=%d", event->msg_id);
+        {
+            char topic[128] = {0};
+            if (event->topic_len > 0 && event->topic_len < sizeof(topic)) {
+                memcpy(topic, event->topic, event->topic_len);
+                topic[event->topic_len] = '\0';
+                char payload[256] = {0};
+                int payload_len = (event->data_len < sizeof(payload) - 1) ? event->data_len : sizeof(payload) - 1;
+                if (payload_len > 0) {
+                    memcpy(payload, event->data, payload_len);
+                    payload[payload_len] = '\0';
+                    ESP_LOGI(TAG, "Published to topic: %s, payload: %.*s (msg_id=%d)", 
+                            topic, payload_len, payload, event->msg_id);
+                } else {
+                    ESP_LOGI(TAG, "Published to topic: %s (msg_id=%d)", topic, event->msg_id);
+                }
+            } else {
+                ESP_LOGI(TAG, "MQTT published (msg_id=%d)", event->msg_id);
+            }
+        }
         break;
         
     case MQTT_EVENT_DATA:
-        ESP_LOGI(TAG, "MQTT data received");
-        
-        if (s_msg_callback) {
-            // 创建临时字符串
+        {
             char topic[128] = {0};
             if (event->topic_len < sizeof(topic)) {
                 memcpy(topic, event->topic, event->topic_len);
                 topic[event->topic_len] = '\0';
             }
-            s_msg_callback(topic, (uint8_t*)event->data, event->data_len);
+            char payload[256] = {0};
+            int payload_len = (event->data_len < sizeof(payload) - 1) ? event->data_len : sizeof(payload) - 1;
+            if (payload_len > 0) {
+                memcpy(payload, event->data, payload_len);
+                payload[payload_len] = '\0';
+                ESP_LOGI(TAG, "Received data from topic: %s, payload: %.*s (len=%d)", 
+                        topic, payload_len, payload, event->data_len);
+            } else {
+                ESP_LOGI(TAG, "Received data from topic: %s (len=%d)", topic, event->data_len);
+            }
+            
+            if (s_msg_callback) {
+                s_msg_callback(topic, (uint8_t*)event->data, event->data_len);
+            }
         }
         break;
         
@@ -210,7 +259,7 @@ esp_err_t mqtt_client_connect(void)
         return ESP_ERR_INVALID_ARG;
     }
     
-    ESP_LOGI(TAG, "Connecting to MQTT broker (client_id=%s)", client_id);
+    ESP_LOGI(TAG, "Connecting to MQTT broker: %s (client_id=%s)", uri, client_id);
     
     // 配置MQTT客户端
     esp_mqtt_client_config_t mqtt_cfg = {
@@ -253,9 +302,16 @@ esp_err_t mqtt_client_disconnect(void)
             snprintf(topic, sizeof(topic), "device/%s/status", s_sn);
             char status_json[128];
             snprintf(status_json, sizeof(status_json), "{\"sn\":\"%s\",\"status\":\"offline\"}", s_sn);
-            esp_mqtt_client_publish(s_mqtt_client, topic, status_json, strlen(status_json), 1, 0);
+            int msg_id = esp_mqtt_client_publish(s_mqtt_client, topic, status_json, strlen(status_json), 1, 0);
+            if (msg_id >= 0) {
+                ESP_LOGI(TAG, "Published offline status to topic: %s, payload: %s (msg_id=%d)", 
+                        topic, status_json, msg_id);
+            } else {
+                ESP_LOGW(TAG, "Failed to publish offline status to topic: %s", topic);
+            }
         }
         
+        ESP_LOGI(TAG, "Disconnecting MQTT client");
         esp_mqtt_client_stop(s_mqtt_client);
         esp_mqtt_client_destroy(s_mqtt_client);
         s_mqtt_client = NULL;
@@ -283,8 +339,21 @@ esp_err_t mqtt_client_publish(const char *topic, const uint8_t *data, int len, i
     
     int msg_id = esp_mqtt_client_publish(s_mqtt_client, full_topic, (const char*)data, len, qos, 0);
     if (msg_id < 0) {
-        ESP_LOGE(TAG, "Failed to publish");
+        ESP_LOGE(TAG, "Failed to publish to topic: %s", full_topic);
         return ESP_FAIL;
+    }
+    
+    // 记录发布日志（限制payload长度以避免日志过长）
+    char payload_preview[128] = {0};
+    int preview_len = (len < sizeof(payload_preview) - 1) ? len : sizeof(payload_preview) - 1;
+    if (preview_len > 0) {
+        memcpy(payload_preview, data, preview_len);
+        payload_preview[preview_len] = '\0';
+        ESP_LOGI(TAG, "Publishing to topic: %s, payload: %.*s (len=%d, qos=%d, msg_id=%d)", 
+                full_topic, preview_len, payload_preview, len, qos, msg_id);
+    } else {
+        ESP_LOGI(TAG, "Publishing to topic: %s (len=%d, qos=%d, msg_id=%d)", 
+                full_topic, len, qos, msg_id);
     }
     
     return ESP_OK;
@@ -308,9 +377,11 @@ esp_err_t mqtt_client_subscribe(const char *topic, int qos)
     
     int msg_id = esp_mqtt_client_subscribe(s_mqtt_client, full_topic, qos);
     if (msg_id < 0) {
-        ESP_LOGE(TAG, "Failed to subscribe");
+        ESP_LOGE(TAG, "Failed to subscribe to topic: %s", full_topic);
         return ESP_FAIL;
     }
+    
+    ESP_LOGI(TAG, "Subscribing to topic: %s (qos=%d, msg_id=%d)", full_topic, qos, msg_id);
     
     return ESP_OK;
 }

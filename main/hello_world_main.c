@@ -97,8 +97,15 @@ static void on_sensor_data_received(const m701_sensor_data_t *data)
             int sn_len = snprintf(json_with_sn, sizeof(json_with_sn),
                 "{\"sn\":\"%s\",%.*s}", SENSOR_SN, len - 1, json_buf + 1);
             if (sn_len > 0 && sn_len < sizeof(json_with_sn)) {
-                mqtt_client_publish("data", (uint8_t*)json_with_sn, sn_len, 1);
+                esp_err_t ret = mqtt_client_publish("data", (uint8_t*)json_with_sn, sn_len, 1);
+                if (ret == ESP_OK) {
+                    ESP_LOGI(TAG, "Sensor data published to MQTT: %.*s", sn_len, json_with_sn);
+                } else {
+                    ESP_LOGW(TAG, "Failed to publish sensor data to MQTT");
+                }
             }
+        } else {
+            ESP_LOGW(TAG, "MQTT not connected, sensor data not published");
         }
     }
 }
