@@ -102,9 +102,10 @@ static void on_sensor_data_received(const m701_sensor_data_t *data)
             // 在JSON中添加SN字段
             char json_with_sn[160];
             // 解析现有JSON并添加sn字段
-            // 简单方法：在最后一个}之前插入sn字段
+            // json_buf格式: {"co2":609,"hcho":20,...}
+            // 需要跳过开头的{，排除结尾的}，然后添加sn字段
             int sn_len = snprintf(json_with_sn, sizeof(json_with_sn),
-                "{\"sn\":\"%s\",%.*s}", SENSOR_SN, len - 1, json_buf + 1);
+                "{\"sn\":\"%s\",%.*s}", SENSOR_SN, len - 2, json_buf + 1);
             if (sn_len > 0 && sn_len < sizeof(json_with_sn)) {
                 esp_err_t ret = mqtt_client_publish("data", (uint8_t*)json_with_sn, sn_len, 1);
                 if (ret == ESP_OK) {
@@ -201,8 +202,10 @@ static void on_mqtt_message(const char *topic, const uint8_t *data, int len)
             if (json_len > 0) {
                 // 在JSON中添加SN字段（格式：device/{sn}/data，数据中包含SN）
                 char json_with_sn[160];
+                // json_buf格式: {"co2":609,"hcho":20,...}
+                // 需要跳过开头的{，排除结尾的}，然后添加sn字段
                 int sn_len = snprintf(json_with_sn, sizeof(json_with_sn),
-                    "{\"sn\":\"%s\",%.*s}", SENSOR_SN, json_len - 1, json_buf + 1);
+                    "{\"sn\":\"%s\",%.*s}", SENSOR_SN, json_len - 2, json_buf + 1);
                 if (sn_len > 0 && sn_len < sizeof(json_with_sn)) {
                     mqtt_client_publish("data", (uint8_t*)json_with_sn, sn_len, 1);
                 }
