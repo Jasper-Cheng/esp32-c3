@@ -190,6 +190,7 @@ static void on_mqtt_config(const char *config_json)
     
     mqtt_config_t mqtt_cfg = {0};
     
+    // 只解析broker和port，其他字段使用默认值
     cJSON *item = cJSON_GetObjectItem(json, "broker");
     if (item && cJSON_IsString(item)) {
         strncpy(mqtt_cfg.broker, item->valuestring, sizeof(mqtt_cfg.broker) - 1);
@@ -199,23 +200,12 @@ static void on_mqtt_config(const char *config_json)
     if (item && cJSON_IsNumber(item)) {
         mqtt_cfg.port = item->valueint;
     } else {
-        mqtt_cfg.port = 1883;
+        mqtt_cfg.port = 1883;  // 默认端口
     }
     
-    item = cJSON_GetObjectItem(json, "username");
-    if (item && cJSON_IsString(item)) {
-        strncpy(mqtt_cfg.username, item->valuestring, sizeof(mqtt_cfg.username) - 1);
-    }
-    
-    item = cJSON_GetObjectItem(json, "password");
-    if (item && cJSON_IsString(item)) {
-        strncpy(mqtt_cfg.password, item->valuestring, sizeof(mqtt_cfg.password) - 1);
-    }
-    
-    item = cJSON_GetObjectItem(json, "client_id");
-    if (item && cJSON_IsString(item)) {
-        strncpy(mqtt_cfg.client_id, item->valuestring, sizeof(mqtt_cfg.client_id) - 1);
-    }
+    // username、password、client_id 不需要配置
+    // - username/password: 留空表示不使用认证
+    // - client_id: 自动生成 device_{SN} 格式
     
     cJSON_Delete(json);
     
