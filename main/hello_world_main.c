@@ -52,7 +52,7 @@ static void process_mqtt_config(const char *config_json);
 
 /* 设备SN定义（唯一标识） */
 // SN定义（需要在mqtt_wrapper.c中extern引用）
-const char SENSOR_SN[] = "M701001";        // M701传感器序列号
+const char SENSOR_SN[] = "M701001-220403-000001";        // M701传感器序列号
 
 /**
  * @brief LED数据接收回调函数
