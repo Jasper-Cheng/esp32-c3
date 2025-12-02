@@ -17,12 +17,14 @@
  */
 
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/queue.h"
 #include "esp_system.h"
 #include "esp_log.h"
 #include "nvs_flash.h"
-#include <string.h>
 
 #include "ble_service.h"
 #include "ws2812_driver.h"
@@ -34,6 +36,10 @@
 
 /* 日志标签 */
 static const char* TAG = "MAIN";
+
+/* MQTT配置队列 */
+#define MQTT_CONFIG_QUEUE_SIZE 5
+static QueueHandle_t s_mqtt_config_queue = NULL;
 
 /* 设备SN定义（唯一标识） */
 // SN定义（需要在mqtt_wrapper.c中extern引用）
@@ -175,11 +181,35 @@ static void on_wifi_config(const char *ssid, const char *password)
 }
 
 /**
- * @brief MQTT配置回调
+ * @brief MQTT配置回调（从BLE回调中调用，只发送到队列）
  */
 static void on_mqtt_config(const char *config_json)
 {
-    ESP_LOGI(TAG, "MQTT config: %s", config_json);
+    // 只记录日志，不执行耗时操作
+    ESP_LOGI(TAG, "MQTT config received: %s", config_json);
+    
+    // 将配置发送到队列，由主任务处理
+    if (s_mqtt_config_queue) {
+        // 分配内存存储配置字符串
+        char *config_copy = malloc(strlen(config_json) + 1);
+        if (config_copy) {
+            strcpy(config_copy, config_json);
+            if (xQueueSend(s_mqtt_config_queue, &config_copy, pdMS_TO_TICKS(1000)) != pdTRUE) {
+                ESP_LOGE(TAG, "Failed to send MQTT config to queue");
+                free(config_copy);
+            }
+        } else {
+            ESP_LOGE(TAG, "Failed to allocate memory for MQTT config");
+        }
+    }
+}
+
+/**
+ * @brief 处理MQTT配置（在主任务中执行）
+ */
+static void process_mqtt_config(const char *config_json)
+{
+    ESP_LOGI(TAG, "Processing MQTT config: %s", config_json);
     
     // 解析JSON配置
     cJSON *json = cJSON_Parse(config_json);
@@ -216,6 +246,25 @@ static void on_mqtt_config(const char *config_json)
             mqtt_client_connect();
         } else {
             ESP_LOGW(TAG, "WiFi not connected, MQTT will connect after WiFi ready");
+        }
+    }
+}
+
+/**
+ * @brief MQTT配置处理任务
+ */
+static void mqtt_config_task(void *pvParameters)
+{
+    char *config_json = NULL;
+    
+    while (1) {
+        // 从队列接收配置
+        if (xQueueReceive(s_mqtt_config_queue, &config_json, portMAX_DELAY) == pdTRUE) {
+            if (config_json) {
+                process_mqtt_config(config_json);
+                free(config_json);
+                config_json = NULL;
+            }
         }
     }
 }
@@ -292,14 +341,24 @@ void app_main(void)
         return;
     }
 
-    // 7. 初始化BLE服务
+    // 7. 创建MQTT配置队列
+    s_mqtt_config_queue = xQueueCreate(MQTT_CONFIG_QUEUE_SIZE, sizeof(char*));
+    if (!s_mqtt_config_queue) {
+        ESP_LOGE(TAG, "Failed to create MQTT config queue");
+        return;
+    }
+
+    // 8. 创建MQTT配置处理任务
+    xTaskCreate(mqtt_config_task, "mqtt_config_task", 4096, NULL, 5, NULL);
+
+    // 9. 初始化BLE服务
     ret = ble_service_init(on_led_data_received, on_servo_angle_received);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "BLE init failed");
         return;
     }
 
-    // 8. 注册WiFi和MQTT配置回调
+    // 10. 注册WiFi和MQTT配置回调
     ble_service_set_wifi_config_callback(on_wifi_config);
     ble_service_set_mqtt_config_callback(on_mqtt_config);
 
