@@ -583,6 +583,9 @@ static void process_mqtt_config(const char *config_json)
         // 设置MQTT配置
         mqtt_client_set_config(&mqtt_cfg);
         
+        // 重置配置消息发送标志，确保新配置连接成功后会发送配置消息
+        s_config_message_sent = false;
+        
         // 如果WiFi已连接，立即连接MQTT
         if (wifi_manager_is_connected()) {
             mqtt_client_connect();
