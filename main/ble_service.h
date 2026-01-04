@@ -11,7 +11,7 @@
 #include "esp_err.h"
 
 /* BLE配置参数 */
-#define BLE_DEVICE_NAME         "Jasper-C3"
+#define BLE_DEVICE_NAME         "M701_SENSOR"
 #define BLE_SERVICE_UUID        0x00FF
 #define BLE_CHAR_UUID           0xFF01      // LED控制特征值
 #define BLE_SERVO_CHAR_UUID     0xFF02      // 舵机控制特征值

@@ -18,7 +18,7 @@
 
 /* 配置参数 */
 #define M701_UART_NUM           UART_NUM_1      // 使用UART1
-#define M701_UART_RX_PIN        GPIO_NUM_3      // RX引脚
+#define M701_UART_RX_PIN        GPIO_NUM_4      // RX引脚
 #define M701_UART_BAUD_RATE     9600            // 波特率
 #define M701_FRAME_SIZE         17              // 数据帧长度
 #define M701_FRAME_HEADER       0x3C            // 帧头

@@ -631,7 +631,7 @@ void app_main(void)
     ESP_LOGI(TAG, "  Sensor SN: %s", SENSOR_SN);
     ESP_LOGI(TAG, "Hardware:");
     ESP_LOGI(TAG, "  Servo: GPIO2");
-    ESP_LOGI(TAG, "  M701:  GPIO3");
+    ESP_LOGI(TAG, "  M701:  GPIO4");
     ESP_LOGI(TAG, "Use BLE to configure WiFi and MQTT");
     ESP_LOGI(TAG, "WiFi and MQTT configs will be auto-loaded on restart");
     ESP_LOGI(TAG, "========================================");
