@@ -24,6 +24,7 @@
 #include "freertos/queue.h"
 #include "esp_system.h"
 #include "esp_log.h"
+#include "esp_wifi.h"
 #include "nvs_flash.h"
 #include "nvs.h"
 
@@ -45,10 +46,14 @@ static QueueHandle_t s_mqtt_config_queue = NULL;
 /* NVS命名空间 */
 #define NVS_NAMESPACE "mqtt_config"
 #define NVS_KEY_MQTT_CONFIG "mqtt_cfg"
+#define NVS_NAMESPACE_WIFI "wifi_config"
+#define NVS_KEY_WIFI_CONFIG "wifi_cfg"
 
 /* 前向声明 */
 static esp_err_t load_mqtt_config_from_nvs(char *config_json, size_t max_len);
 static void process_mqtt_config(const char *config_json);
+static esp_err_t save_wifi_config_to_nvs(const char *ssid, const char *password);
+static esp_err_t load_wifi_config_from_nvs(char *ssid, size_t ssid_size, char *password, size_t password_size);
 
 /* 设备SN定义（唯一标识） */
 // SN定义（需要在mqtt_wrapper.c中extern引用）
@@ -127,13 +132,30 @@ static void on_wifi_status(bool connected, const char *ip_addr)
 {
     if (connected) {
         ESP_LOGI(TAG, "WiFi connected, IP: %s", ip_addr);
+        
+        // WiFi连接成功后，从系统配置读取并保存到我们的NVS（确保配置持久化）
+        // 这样即使是通过系统自动连接的，也能保存到我们的NVS中
+        wifi_config_t wifi_config = {0};
+        esp_err_t ret = esp_wifi_get_config(WIFI_IF_STA, &wifi_config);
+        if (ret == ESP_OK && strlen((char*)wifi_config.sta.ssid) > 0) {
+            // 检查是否已经保存到我们的NVS中
+            char saved_ssid[64] = {0};
+            char saved_password[64] = {0};
+            if (load_wifi_config_from_nvs(saved_ssid, sizeof(saved_ssid), 
+                                          saved_password, sizeof(saved_password)) != ESP_OK ||
+                strcmp(saved_ssid, (char*)wifi_config.sta.ssid) != 0) {
+                // 配置不存在或不匹配，保存当前配置
+                save_wifi_config_to_nvs((char*)wifi_config.sta.ssid, 
+                                        (char*)wifi_config.sta.password);
+            }
+        }
+        
         // WiFi连接成功后，如果MQTT已配置则自动连接
         // 通过队列发送，避免在回调中执行耗时操作
-        
         if (s_mqtt_config_queue) {
             // 尝试从NVS加载MQTT配置
             char config_json[512] = {0};
-            esp_err_t ret = load_mqtt_config_from_nvs(config_json, sizeof(config_json));
+            ret = load_mqtt_config_from_nvs(config_json, sizeof(config_json));
             if (ret == ESP_OK) {
                 ESP_LOGI(TAG, "Auto-connecting MQTT with saved config");
                 // 分配内存并发送到队列
@@ -220,6 +242,8 @@ static void on_mqtt_message(const char *topic, const uint8_t *data, int len)
 static void on_wifi_config(const char *ssid, const char *password)
 {
     ESP_LOGI(TAG, "WiFi config: SSID=%s", ssid);
+    // 保存配置到NVS（在连接前保存，这样即使连接失败也能保存配置）
+    save_wifi_config_to_nvs(ssid, password);
     wifi_manager_connect(ssid, password);
 }
 
@@ -303,6 +327,97 @@ static esp_err_t load_mqtt_config_from_nvs(char *config_json, size_t max_len)
     }
     
     return ret;
+}
+
+/**
+ * @brief 保存WiFi配置到NVS
+ */
+static esp_err_t save_wifi_config_to_nvs(const char *ssid, const char *password)
+{
+    nvs_handle_t nvs_handle;
+    esp_err_t ret = nvs_open(NVS_NAMESPACE_WIFI, NVS_READWRITE, &nvs_handle);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to open NVS: %s", esp_err_to_name(ret));
+        return ret;
+    }
+    
+    // 保存SSID
+    ret = nvs_set_str(nvs_handle, "ssid", ssid);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to save WiFi SSID to NVS: %s", esp_err_to_name(ret));
+        nvs_close(nvs_handle);
+        return ret;
+    }
+    
+    // 保存密码（如果提供）
+    if (password && strlen(password) > 0) {
+        ret = nvs_set_str(nvs_handle, "password", password);
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to save WiFi password to NVS: %s", esp_err_to_name(ret));
+            nvs_close(nvs_handle);
+            return ret;
+        }
+    } else {
+        // 如果没有密码，删除之前保存的密码
+        nvs_erase_key(nvs_handle, "password");
+    }
+    
+    ret = nvs_commit(nvs_handle);
+    nvs_close(nvs_handle);
+    
+    if (ret == ESP_OK) {
+        ESP_LOGI(TAG, "WiFi config saved to NVS (SSID: %s)", ssid);
+    } else {
+        ESP_LOGE(TAG, "Failed to commit NVS: %s", esp_err_to_name(ret));
+    }
+    
+    return ret;
+}
+
+/**
+ * @brief 从NVS加载WiFi配置
+ */
+static esp_err_t load_wifi_config_from_nvs(char *ssid, size_t ssid_size, char *password, size_t password_size)
+{
+    nvs_handle_t nvs_handle;
+    esp_err_t ret = nvs_open(NVS_NAMESPACE_WIFI, NVS_READONLY, &nvs_handle);
+    if (ret != ESP_OK) {
+        ESP_LOGI(TAG, "Failed to open NVS namespace '%s' (may not exist): %s", NVS_NAMESPACE_WIFI, esp_err_to_name(ret));
+        return ret;
+    }
+    
+    // 加载SSID
+    size_t required_size = ssid_size;
+    ret = nvs_get_str(nvs_handle, "ssid", ssid, &required_size);
+    if (ret != ESP_OK) {
+        nvs_close(nvs_handle);
+        if (ret == ESP_ERR_NVS_NOT_FOUND) {
+            ESP_LOGI(TAG, "No WiFi SSID found in NVS");
+        } else {
+            ESP_LOGE(TAG, "Failed to load WiFi SSID from NVS: %s", esp_err_to_name(ret));
+        }
+        return ret;
+    }
+    
+    // 加载密码（可选）
+    if (password && password_size > 0) {
+        required_size = password_size;
+        ret = nvs_get_str(nvs_handle, "password", password, &required_size);
+        if (ret == ESP_ERR_NVS_NOT_FOUND) {
+            // 密码不存在（可能是开放网络），清空密码
+            password[0] = '\0';
+            ESP_LOGI(TAG, "No WiFi password found in NVS (open network)");
+        } else if (ret != ESP_OK) {
+            ESP_LOGW(TAG, "Failed to load WiFi password from NVS: %s", esp_err_to_name(ret));
+            password[0] = '\0';
+        }
+    }
+    
+    nvs_close(nvs_handle);
+    
+    ESP_LOGI(TAG, "WiFi config loaded from NVS (SSID: %s)", ssid);
+    
+    return ESP_OK;
 }
 
 /**
@@ -469,7 +584,24 @@ void app_main(void)
     ble_service_set_wifi_config_callback(on_wifi_config);
     ble_service_set_mqtt_config_callback(on_mqtt_config);
 
-    // 11. 如果WiFi已连接，尝试自动加载并连接MQTT（通过队列）
+    // 11. 如果WiFi未连接，尝试从NVS加载配置并自动连接
+    if (!wifi_manager_is_connected()) {
+        ESP_LOGI(TAG, "WiFi not connected, checking for saved WiFi config...");
+        char saved_ssid[64] = {0};
+        char saved_password[64] = {0};
+        if (load_wifi_config_from_nvs(saved_ssid, sizeof(saved_ssid), 
+                                      saved_password, sizeof(saved_password)) == ESP_OK) {
+            ESP_LOGI(TAG, "Auto-connecting WiFi with saved config (SSID: %s)", saved_ssid);
+            // 延迟一下确保系统稳定
+            vTaskDelay(pdMS_TO_TICKS(2000));
+            // 自动连接WiFi
+            wifi_manager_connect(saved_ssid, saved_password[0] ? saved_password : NULL);
+        } else {
+            ESP_LOGI(TAG, "No saved WiFi config found, waiting for BLE configuration");
+        }
+    }
+
+    // 12. 如果WiFi已连接，尝试自动加载并连接MQTT（通过队列）
     if (wifi_manager_is_connected()) {
         ESP_LOGI(TAG, "WiFi already connected, checking for saved MQTT config...");
         char config_json[512] = {0};
@@ -501,6 +633,6 @@ void app_main(void)
     ESP_LOGI(TAG, "  Servo: GPIO2");
     ESP_LOGI(TAG, "  M701:  GPIO3");
     ESP_LOGI(TAG, "Use BLE to configure WiFi and MQTT");
-    ESP_LOGI(TAG, "MQTT config will be auto-loaded on restart");
+    ESP_LOGI(TAG, "WiFi and MQTT configs will be auto-loaded on restart");
     ESP_LOGI(TAG, "========================================");
 }
