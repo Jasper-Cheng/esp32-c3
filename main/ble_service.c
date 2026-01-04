@@ -73,7 +73,7 @@ static bool parse_led_data_string(const uint8_t *data, uint16_t len, uint8_t *ou
 
 static uint8_t adv_payload[] = {
     0x02, 0x01, 0x06,
-    0x0A, 0x09, 'J', 'a', 's', 'p', 'e', 'r', '-', 'C', '3',
+    0x0C, 0x09, 'M', '7', '0', '1', '_', 'S', 'E', 'N', 'S', 'O', 'R',
     0x03, 0x03, 0xFF, 0x00,
 };
 
