@@ -627,6 +627,53 @@ void app_main(void)
 
     ESP_LOGI(TAG, "========================================");
     ESP_LOGI(TAG, "System ready!");
+    
+    // 输出BLE名称
+    ESP_LOGI(TAG, "BLE Configuration:");
+    ESP_LOGI(TAG, "  Device Name: %s", BLE_DEVICE_NAME);
+    
+    // 输出WiFi配置
+    ESP_LOGI(TAG, "WiFi Configuration:");
+    char saved_ssid[64] = {0};
+    char saved_password[64] = {0};
+    if (load_wifi_config_from_nvs(saved_ssid, sizeof(saved_ssid), 
+                                  saved_password, sizeof(saved_password)) == ESP_OK) {
+        if (saved_password[0] != '\0') {
+            ESP_LOGI(TAG, "  SSID: %s", saved_ssid);
+            ESP_LOGI(TAG, "  Password: %s", saved_password);
+        } else {
+            ESP_LOGI(TAG, "  SSID: %s", saved_ssid);
+            ESP_LOGI(TAG, "  Password: (open network)");
+        }
+    } else {
+        ESP_LOGI(TAG, "  Status: Not configured");
+    }
+    
+    // 输出MQTT配置
+    ESP_LOGI(TAG, "MQTT Configuration:");
+    char mqtt_config_json[512] = {0};
+    if (load_mqtt_config_from_nvs(mqtt_config_json, sizeof(mqtt_config_json)) == ESP_OK) {
+        // 解析JSON以提取broker和port
+        cJSON *json = cJSON_Parse(mqtt_config_json);
+        if (json) {
+            cJSON *broker = cJSON_GetObjectItem(json, "broker");
+            cJSON *port = cJSON_GetObjectItem(json, "port");
+            if (broker && cJSON_IsString(broker)) {
+                ESP_LOGI(TAG, "  Broker: %s", broker->valuestring);
+            }
+            if (port && cJSON_IsNumber(port)) {
+                ESP_LOGI(TAG, "  Port: %d", port->valueint);
+            } else {
+                ESP_LOGI(TAG, "  Port: 1883 (default)");
+            }
+            cJSON_Delete(json);
+        } else {
+            ESP_LOGI(TAG, "  Config: %s", mqtt_config_json);
+        }
+    } else {
+        ESP_LOGI(TAG, "  Status: Not configured");
+    }
+    
     ESP_LOGI(TAG, "Device SN:");
     ESP_LOGI(TAG, "  Sensor SN: %s", SENSOR_SN);
     ESP_LOGI(TAG, "Hardware:");
