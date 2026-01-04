@@ -446,3 +446,30 @@ const char* mqtt_client_get_full_topic(const char *relative_topic, char *full_to
     return full_topic;
 }
 
+/**
+ * @brief 获取当前MQTT配置信息（JSON格式）
+ */
+int mqtt_client_get_config_json(char *json_buf, size_t buf_size)
+{
+    if (!json_buf || buf_size == 0) {
+        return 0;
+    }
+    
+    if (!s_configured || strlen(s_config.broker) == 0) {
+        // 未配置，返回状态信息
+        return snprintf(json_buf, buf_size, "{\"status\":\"not_configured\"}");
+    }
+    
+    if (s_connected) {
+        // 已连接，返回broker、port和状态
+        return snprintf(json_buf, buf_size, 
+                       "{\"broker\":\"%s\",\"port\":%d,\"status\":\"connected\"}",
+                       s_config.broker, s_config.port);
+    } else {
+        // 未连接，返回broker、port和状态
+        return snprintf(json_buf, buf_size, 
+                       "{\"broker\":\"%s\",\"port\":%d,\"status\":\"disconnected\"}",
+                       s_config.broker, s_config.port);
+    }
+}
+

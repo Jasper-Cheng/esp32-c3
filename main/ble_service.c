@@ -6,6 +6,7 @@
 
 #include "ble_service.h"
 #include "wifi_manager.h"
+#include "mqtt_wrapper.h"
 #include "ws2812_driver.h"
 #include "esp_log.h"
 #include "esp_bt.h"
@@ -434,10 +435,18 @@ static void gatts_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_
                 memcpy(rsp.attr_value.value, empty, rsp.attr_value.len);
             }
         } else if (param->read.handle == ble_mqtt_config_handle) {
-            // 读取MQTT配置信息（预留，当前返回空）
-            const char *mqtt_info = "{\"status\":\"not_configured\"}";
-            rsp.attr_value.len = strlen(mqtt_info);
-            memcpy(rsp.attr_value.value, mqtt_info, rsp.attr_value.len);
+            // 读取MQTT配置信息
+            char mqtt_info[128];
+            int len = mqtt_client_get_config_json(mqtt_info, sizeof(mqtt_info));
+            if (len > 0 && len < sizeof(rsp.attr_value.value)) {
+                rsp.attr_value.len = len;
+                memcpy(rsp.attr_value.value, mqtt_info, len);
+            } else {
+                // 如果获取失败，返回空状态
+                const char *empty = "{\"status\":\"unknown\"}";
+                rsp.attr_value.len = strlen(empty);
+                memcpy(rsp.attr_value.value, empty, rsp.attr_value.len);
+            }
         }
         
         esp_ble_gatts_send_response(gatts_if, param->read.conn_id,

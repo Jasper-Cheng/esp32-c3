@@ -44,6 +44,7 @@ static const char* TAG = "MAIN";
 /* MQTT配置队列 */
 #define MQTT_CONFIG_QUEUE_SIZE 5
 static QueueHandle_t s_mqtt_config_queue = NULL;
+static bool s_config_message_sent = false;  // 标志：配置消息是否已发送
 
 /* NVS命名空间 */
 #define NVS_NAMESPACE "mqtt_config"
@@ -186,11 +187,18 @@ static void on_wifi_status(bool connected, const char *ip_addr)
  * @brief 发送MQTT配置消息
  * 
  * 在MQTT连接成功后，发送设备配置信息到device/{sn}/config主题
+ * 注意：配置消息只发送一次，避免重复发送
  */
 static void send_mqtt_config_message(void)
 {
     if (!mqtt_client_is_connected()) {
         ESP_LOGW(TAG, "MQTT not connected, cannot send config message");
+        return;
+    }
+    
+    // 如果已经发送过配置消息，则跳过
+    if (s_config_message_sent) {
+        ESP_LOGI(TAG, "MQTT config message already sent, skipping");
         return;
     }
     
@@ -274,6 +282,7 @@ static void send_mqtt_config_message(void)
         if (ret == ESP_OK) {
             ESP_LOGI(TAG, "MQTT config message sent to topic: device/%s/config", SENSOR_SN);
             ESP_LOGI(TAG, "Config message: %s", json_str);
+            s_config_message_sent = true;  // 标记已发送
         } else {
             ESP_LOGE(TAG, "Failed to publish MQTT config message");
         }
@@ -294,10 +303,12 @@ static void on_mqtt_status(bool connected)
     if (connected) {
         ESP_LOGI(TAG, "MQTT connected");
         // MQTT连接成功后，延迟一下确保连接稳定，然后发送配置消息
+        // 注意：配置消息只发送一次，通过s_config_message_sent标志控制
         vTaskDelay(pdMS_TO_TICKS(1000));
         send_mqtt_config_message();
     } else {
         ESP_LOGI(TAG, "MQTT disconnected");
+        // 断开连接时不清除标志，因为重连后也不需要再次发送配置消息
     }
 }
 
@@ -711,7 +722,8 @@ void app_main(void)
     }
 
     // 12. 如果WiFi已连接，尝试自动加载并连接MQTT（通过队列）
-    if (wifi_manager_is_connected()) {
+    // 注意：如果MQTT已经连接（可能在on_wifi_status回调中已连接），则跳过
+    if (wifi_manager_is_connected() && !mqtt_client_is_connected()) {
         ESP_LOGI(TAG, "WiFi already connected, checking for saved MQTT config...");
         char config_json[512] = {0};
         if (load_mqtt_config_from_nvs(config_json, sizeof(config_json)) == ESP_OK) {
@@ -732,6 +744,8 @@ void app_main(void)
         } else {
             ESP_LOGI(TAG, "No saved MQTT config found, waiting for BLE configuration");
         }
+    } else if (wifi_manager_is_connected() && mqtt_client_is_connected()) {
+        ESP_LOGI(TAG, "WiFi and MQTT already connected, skipping auto-connect");
     }
 
     ESP_LOGI(TAG, "========================================");

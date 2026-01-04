@@ -124,5 +124,14 @@ bool mqtt_client_is_connected(void);
  */
 const char* mqtt_client_get_full_topic(const char *relative_topic, char *full_topic, size_t buf_size);
 
+/**
+ * @brief 获取当前MQTT配置信息（JSON格式）
+ * 
+ * @param json_buf 输出缓冲区
+ * @param buf_size 缓冲区大小
+ * @return 实际写入的字节数，失败返回0
+ */
+int mqtt_client_get_config_json(char *json_buf, size_t buf_size);
+
 #endif // MQTT_WRAPPER_H
 
