@@ -25,6 +25,8 @@
 #include "esp_system.h"
 #include "esp_log.h"
 #include "esp_wifi.h"
+#include "esp_mac.h"
+#include "esp_idf_version.h"
 #include "nvs_flash.h"
 #include "nvs.h"
 
@@ -181,12 +183,119 @@ static void on_wifi_status(bool connected, const char *ip_addr)
 }
 
 /**
+ * @brief 发送MQTT配置消息
+ * 
+ * 在MQTT连接成功后，发送设备配置信息到device/{sn}/config主题
+ */
+static void send_mqtt_config_message(void)
+{
+    if (!mqtt_client_is_connected()) {
+        ESP_LOGW(TAG, "MQTT not connected, cannot send config message");
+        return;
+    }
+    
+    cJSON *json = cJSON_CreateObject();
+    if (!json) {
+        ESP_LOGE(TAG, "Failed to create JSON object for config message");
+        return;
+    }
+    
+    // sn: 设备序列号（必填）
+    cJSON_AddStringToObject(json, "sn", SENSOR_SN);
+    
+    // ip: 设备IP地址（可选）
+    char ip_buf[16] = {0};
+    const char *ip = wifi_manager_get_ip(ip_buf, sizeof(ip_buf));
+    if (ip && strlen(ip) > 0) {
+        cJSON_AddStringToObject(json, "ip", ip);
+    }
+    
+    // mac: 设备MAC地址（可选）
+    uint8_t mac[6];
+    if (esp_read_mac(mac, ESP_MAC_WIFI_STA) == ESP_OK) {
+        char mac_str[18];
+        snprintf(mac_str, sizeof(mac_str), "%02X:%02X:%02X:%02X:%02X:%02X",
+                 mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+        cJSON_AddStringToObject(json, "mac", mac_str);
+    }
+    
+    // ble_name: 蓝牙名称（可选）
+    cJSON_AddStringToObject(json, "ble_name", BLE_DEVICE_NAME);
+    
+    // wifi_name: WiFi SSID（可选）
+    char wifi_ssid[64] = {0};
+    char wifi_password[64] = {0};
+    if (load_wifi_config_from_nvs(wifi_ssid, sizeof(wifi_ssid), 
+                                   wifi_password, sizeof(wifi_password)) == ESP_OK) {
+        if (strlen(wifi_ssid) > 0) {
+            cJSON_AddStringToObject(json, "wifi_name", wifi_ssid);
+        }
+    }
+    
+    // wifi_password: WiFi密码（可选）
+    if (strlen(wifi_password) > 0) {
+        cJSON_AddStringToObject(json, "wifi_password", wifi_password);
+    }
+    
+    // mqtt_broker: MQTT服务器地址（可选）
+    // mqtt_port: MQTT端口（可选）
+    char mqtt_config_json[512] = {0};
+    if (load_mqtt_config_from_nvs(mqtt_config_json, sizeof(mqtt_config_json)) == ESP_OK) {
+        cJSON *mqtt_json = cJSON_Parse(mqtt_config_json);
+        if (mqtt_json) {
+            cJSON *broker = cJSON_GetObjectItem(mqtt_json, "broker");
+            cJSON *port = cJSON_GetObjectItem(mqtt_json, "port");
+            if (broker && cJSON_IsString(broker)) {
+                cJSON_AddStringToObject(json, "mqtt_broker", broker->valuestring);
+            }
+            if (port && cJSON_IsNumber(port)) {
+                cJSON_AddNumberToObject(json, "mqtt_port", port->valueint);
+            } else {
+                cJSON_AddNumberToObject(json, "mqtt_port", 1883);  // 默认端口
+            }
+            cJSON_Delete(mqtt_json);
+        }
+    }
+    
+    // firmware: 固件版本（可选）
+    char firmware_version[32];
+    snprintf(firmware_version, sizeof(firmware_version), "v%d.%d.%d", 
+             ESP_IDF_VERSION_MAJOR, ESP_IDF_VERSION_MINOR, ESP_IDF_VERSION_PATCH);
+    cJSON_AddStringToObject(json, "firmware", firmware_version);
+    
+    // 转换为JSON字符串
+    char *json_str = cJSON_Print(json);
+    if (json_str) {
+        // 发布到device/{sn}/config主题
+        char topic[128];
+        snprintf(topic, sizeof(topic), "device/%s/config", SENSOR_SN);
+        
+        esp_err_t ret = mqtt_client_publish("config", (uint8_t*)json_str, strlen(json_str), 1);
+        if (ret == ESP_OK) {
+            ESP_LOGI(TAG, "MQTT config message sent to topic: device/%s/config", SENSOR_SN);
+            ESP_LOGI(TAG, "Config message: %s", json_str);
+        } else {
+            ESP_LOGE(TAG, "Failed to publish MQTT config message");
+        }
+        
+        free(json_str);
+    } else {
+        ESP_LOGE(TAG, "Failed to convert config JSON to string");
+    }
+    
+    cJSON_Delete(json);
+}
+
+/**
  * @brief MQTT连接状态回调
  */
 static void on_mqtt_status(bool connected)
 {
     if (connected) {
         ESP_LOGI(TAG, "MQTT connected");
+        // MQTT连接成功后，延迟一下确保连接稳定，然后发送配置消息
+        vTaskDelay(pdMS_TO_TICKS(1000));
+        send_mqtt_config_message();
     } else {
         ESP_LOGI(TAG, "MQTT disconnected");
     }
