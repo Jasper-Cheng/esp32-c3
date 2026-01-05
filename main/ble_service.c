@@ -369,6 +369,12 @@ static void gatts_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_
             
             ESP_LOGI(TAG, "WiFi config received: %s", config_str);
             
+            // 先发送响应，表示写入成功
+            if (param->write.need_rsp) {
+                esp_ble_gatts_send_response(gatts_if, param->write.conn_id,
+                                            param->write.trans_id, ESP_GATT_OK, NULL);
+            }
+            
             // 解析JSON: {"ssid":"xxx","password":"xxx"}
             char ssid[64] = {0};
             char password[64] = {0};
@@ -377,15 +383,11 @@ static void gatts_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_
             if (sscanf(config_str, "{\"ssid\":\"%63[^\"]\",\"password\":\"%63[^\"]\"}", ssid, password) == 2 ||
                 sscanf(config_str, "{\"ssid\":\"%63[^\"]\"}", ssid) == 1) {
                 if (g_wifi_config_callback) {
+                    // 在后台处理配置（保存和连接）
                     g_wifi_config_callback(ssid, password);
                 }
             } else {
                 ESP_LOGW(TAG, "Invalid WiFi config format");
-            }
-            
-            if (param->write.need_rsp) {
-                esp_ble_gatts_send_response(gatts_if, param->write.conn_id,
-                                            param->write.trans_id, ESP_GATT_OK, NULL);
             }
         } else if (param->write.handle == ble_mqtt_config_handle) {
             // MQTT配置写入

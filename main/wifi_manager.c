@@ -173,49 +173,20 @@ esp_err_t wifi_manager_connect(const char *ssid, const char *password)
         return ret;
     }
     
-    // 检查WiFi状态，如果正在连接则等待或跳过
+    // 检查WiFi状态，如果正在连接则跳过
     ret = esp_wifi_connect();
     if (ret == ESP_ERR_WIFI_CONN) {
-        // WiFi正在连接中，等待连接完成
-        ESP_LOGI(TAG, "WiFi is already connecting, waiting for connection result...");
-        // 等待连接结果
-        EventBits_t bits = xEventGroupWaitBits(s_wifi_event_group,
-                                              WIFI_CONNECTED_BIT | WIFI_FAIL_BIT,
-                                              pdFALSE,
-                                              pdFALSE,
-                                              pdMS_TO_TICKS(30000));
-        if (bits & WIFI_CONNECTED_BIT) {
-            ESP_LOGI(TAG, "WiFi connected successfully");
-            return ESP_OK;
-        } else if (bits & WIFI_FAIL_BIT) {
-            ESP_LOGE(TAG, "WiFi connection failed");
-            return ESP_FAIL;
-        } else {
-            ESP_LOGE(TAG, "WiFi connection timeout");
-            return ESP_ERR_TIMEOUT;
-        }
+        // WiFi正在连接中，直接返回成功，连接在后台进行
+        ESP_LOGI(TAG, "WiFi is already connecting, connection in progress...");
+        return ESP_OK;
     } else if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to connect WiFi: %s", esp_err_to_name(ret));
         return ret;
     }
     
-    // 等待连接结果
-    EventBits_t bits = xEventGroupWaitBits(s_wifi_event_group,
-                                          WIFI_CONNECTED_BIT | WIFI_FAIL_BIT,
-                                          pdFALSE,
-                                          pdFALSE,
-                                          pdMS_TO_TICKS(30000));
-    
-    if (bits & WIFI_CONNECTED_BIT) {
-        ESP_LOGI(TAG, "WiFi connected successfully");
-        return ESP_OK;
-    } else if (bits & WIFI_FAIL_BIT) {
-        ESP_LOGE(TAG, "WiFi connection failed");
-        return ESP_FAIL;
-    } else {
-        ESP_LOGE(TAG, "WiFi connection timeout");
-        return ESP_ERR_TIMEOUT;
-    }
+    // 连接已启动，立即返回，连接结果通过回调函数通知
+    ESP_LOGI(TAG, "WiFi connection started, result will be notified via callback");
+    return ESP_OK;
 }
 
 /**
