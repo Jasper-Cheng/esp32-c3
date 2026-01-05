@@ -40,7 +40,8 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
         switch (event_id) {
         case WIFI_EVENT_STA_START:
             ESP_LOGI(TAG, "WiFi station started");
-            esp_wifi_connect();
+            // 不自动连接，等待应用层调用 wifi_manager_connect() 或使用系统保存的配置
+            // esp_wifi_connect();  // 移除自动连接，避免与应用层连接冲突
             break;
             
         case WIFI_EVENT_STA_CONNECTED:
@@ -166,8 +167,37 @@ esp_err_t wifi_manager_connect(const char *ssid, const char *password)
     }
     wifi_config.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
     
-    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
-    ESP_ERROR_CHECK(esp_wifi_connect());
+    esp_err_t ret = esp_wifi_set_config(WIFI_IF_STA, &wifi_config);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to set WiFi config: %s", esp_err_to_name(ret));
+        return ret;
+    }
+    
+    // 检查WiFi状态，如果正在连接则等待或跳过
+    ret = esp_wifi_connect();
+    if (ret == ESP_ERR_WIFI_CONN) {
+        // WiFi正在连接中，等待连接完成
+        ESP_LOGI(TAG, "WiFi is already connecting, waiting for connection result...");
+        // 等待连接结果
+        EventBits_t bits = xEventGroupWaitBits(s_wifi_event_group,
+                                              WIFI_CONNECTED_BIT | WIFI_FAIL_BIT,
+                                              pdFALSE,
+                                              pdFALSE,
+                                              pdMS_TO_TICKS(30000));
+        if (bits & WIFI_CONNECTED_BIT) {
+            ESP_LOGI(TAG, "WiFi connected successfully");
+            return ESP_OK;
+        } else if (bits & WIFI_FAIL_BIT) {
+            ESP_LOGE(TAG, "WiFi connection failed");
+            return ESP_FAIL;
+        } else {
+            ESP_LOGE(TAG, "WiFi connection timeout");
+            return ESP_ERR_TIMEOUT;
+        }
+    } else if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to connect WiFi: %s", esp_err_to_name(ret));
+        return ret;
+    }
     
     // 等待连接结果
     EventBits_t bits = xEventGroupWaitBits(s_wifi_event_group,
