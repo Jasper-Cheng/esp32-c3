@@ -16,6 +16,8 @@
     "--query-driver=C:\\Users\\942.AD\\.espressif\\tools\\riscv32-esp-elf\\esp-13.2.0_20230928\\riscv32-esp-elf\\bin\\riscv32-esp-elf-gcc.exe",
     "--compile-commands-dir=${workspaceFolder}\\build"
   ],
-  "idf.monitorPort": "COM7",
-  "idf.flashType": "UART"
+  "idf.monitorPort": "/dev/tty.usbmodem5ABA0873661",
+  "idf.flashType": "UART",
+  "idf.currentSetup": "/Users/jaspercheng/.espressif/v5.5.2/esp-idf",
+  "idf.port": "/dev/tty.usbmodem5ABA0873661"
 }

@@ -216,7 +216,7 @@ esp_err_t mqtt_client_set_config(const mqtt_config_t *config)
     
     // 设置默认值
     if (s_config.port == 0) {
-        s_config.port = 1883;
+        s_config.port = 8083;
     }
     
     s_configured = true;
