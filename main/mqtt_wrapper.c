@@ -242,17 +242,17 @@ esp_err_t mqtt_client_connect(void)
         s_mqtt_client = NULL;
     }
     
-    // 构建MQTT URI
+    // 构建MQTT URI（username 使用设备 SN）
     char client_id[64];
     get_client_id(client_id, sizeof(client_id));
     
     // 增加缓冲区大小以避免截断警告
     char uri[512];
     int uri_len;
-    if (strlen(s_config.username) > 0) {
+    if (s_sn[0] != '\0') {
+        // 使用 SN 作为 username 和 password
         uri_len = snprintf(uri, sizeof(uri), "mqtt://%s:%s@%s:%d",
-                          s_config.username, s_config.password,
-                          s_config.broker, s_config.port);
+                          s_sn, s_sn, s_config.broker, s_config.port);
     } else {
         uri_len = snprintf(uri, sizeof(uri), "mqtt://%s:%d",
                           s_config.broker, s_config.port);

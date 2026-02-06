@@ -46,6 +46,16 @@ static const char* TAG = "MAIN";
 static QueueHandle_t s_mqtt_config_queue = NULL;
 static bool s_config_message_sent = false;  // 标志：配置消息是否已发送
 
+/* WiFi配置队列（BLE 回调中只投递到队列，避免在 BTC_TASK 中执行 NVS/WiFi 导致栈溢出） */
+#define WIFI_CONFIG_QUEUE_SIZE 3
+#define WIFI_SSID_MAX 64
+#define WIFI_PASSWORD_MAX 64
+typedef struct {
+    char ssid[WIFI_SSID_MAX];
+    char password[WIFI_PASSWORD_MAX];
+} wifi_config_msg_t;
+static QueueHandle_t s_wifi_config_queue = NULL;
+
 /* NVS命名空间 */
 #define NVS_NAMESPACE "mqtt_config"
 #define NVS_KEY_MQTT_CONFIG "mqtt_cfg"
@@ -357,14 +367,36 @@ static void on_mqtt_message(const char *topic, const uint8_t *data, int len)
 }
 
 /**
- * @brief WiFi配置回调
+ * @brief 处理 WiFi 配置（在独立任务中执行，避免在 BLE 回调中执行导致 BTC_TASK 栈溢出）
+ */
+static void process_wifi_config(const char *ssid, const char *password)
+{
+    ESP_LOGI(TAG, "WiFi config: SSID=%s", ssid);
+    save_wifi_config_to_nvs(ssid, password);
+    wifi_manager_connect(ssid, password);
+}
+
+/**
+ * @brief WiFi 配置回调（从 BLE 回调中调用，只投递到队列，不执行耗时操作）
  */
 static void on_wifi_config(const char *ssid, const char *password)
 {
-    ESP_LOGI(TAG, "WiFi config: SSID=%s", ssid);
-    // 保存配置到NVS（在连接前保存，这样即使连接失败也能保存配置）
-    save_wifi_config_to_nvs(ssid, password);
-    wifi_manager_connect(ssid, password);
+    if (!s_wifi_config_queue) {
+        return;
+    }
+    wifi_config_msg_t *msg = malloc(sizeof(wifi_config_msg_t));
+    if (!msg) {
+        ESP_LOGE(TAG, "Failed to allocate WiFi config message");
+        return;
+    }
+    strncpy(msg->ssid, ssid, WIFI_SSID_MAX - 1);
+    msg->ssid[WIFI_SSID_MAX - 1] = '\0';
+    strncpy(msg->password, password ? password : "", WIFI_PASSWORD_MAX - 1);
+    msg->password[WIFI_PASSWORD_MAX - 1] = '\0';
+    if (xQueueSend(s_wifi_config_queue, &msg, pdMS_TO_TICKS(500)) != pdTRUE) {
+        ESP_LOGE(TAG, "Failed to send WiFi config to queue");
+        free(msg);
+    }
 }
 
 /**
@@ -598,6 +630,21 @@ static void process_mqtt_config(const char *config_json)
 }
 
 /**
+ * @brief WiFi 配置处理任务
+ */
+static void wifi_config_task(void *pvParameters)
+{
+    wifi_config_msg_t *msg = NULL;
+    
+    while (1) {
+        if (xQueueReceive(s_wifi_config_queue, &msg, portMAX_DELAY) == pdTRUE && msg) {
+            process_wifi_config(msg->ssid, msg->password[0] ? msg->password : NULL);
+            free(msg);
+        }
+    }
+}
+
+/**
  * @brief MQTT配置处理任务
  */
 static void mqtt_config_task(void *pvParameters)
@@ -688,28 +735,36 @@ void app_main(void)
         return;
     }
 
-    // 7. 创建MQTT配置队列
+    // 7. 创建 WiFi 配置队列与处理任务（必须在 BLE 注册回调前创建）
+    s_wifi_config_queue = xQueueCreate(WIFI_CONFIG_QUEUE_SIZE, sizeof(wifi_config_msg_t *));
+    if (!s_wifi_config_queue) {
+        ESP_LOGE(TAG, "Failed to create WiFi config queue");
+        return;
+    }
+    xTaskCreate(wifi_config_task, "wifi_config_task", 4096, NULL, 5, NULL);
+
+    // 8. 创建MQTT配置队列
     s_mqtt_config_queue = xQueueCreate(MQTT_CONFIG_QUEUE_SIZE, sizeof(char*));
     if (!s_mqtt_config_queue) {
         ESP_LOGE(TAG, "Failed to create MQTT config queue");
         return;
     }
 
-    // 8. 创建MQTT配置处理任务
+    // 9. 创建MQTT配置处理任务
     xTaskCreate(mqtt_config_task, "mqtt_config_task", 4096, NULL, 5, NULL);
 
-    // 9. 初始化BLE服务
+    // 10. 初始化BLE服务
     ret = ble_service_init(on_led_data_received, on_servo_angle_received);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "BLE init failed");
         return;
     }
 
-    // 10. 注册WiFi和MQTT配置回调
+    // 11. 注册WiFi和MQTT配置回调
     ble_service_set_wifi_config_callback(on_wifi_config);
     ble_service_set_mqtt_config_callback(on_mqtt_config);
 
-    // 11. 如果WiFi未连接，尝试从NVS加载配置并自动连接
+    // 12. 如果WiFi未连接，尝试从NVS加载配置并自动连接
     if (!wifi_manager_is_connected()) {
         ESP_LOGI(TAG, "WiFi not connected, checking for saved WiFi config...");
         char saved_ssid[64] = {0};
@@ -726,7 +781,7 @@ void app_main(void)
         }
     }
 
-    // 12. 如果WiFi已连接，尝试自动加载并连接MQTT（通过队列）
+    // 13. 如果WiFi已连接，尝试自动加载并连接MQTT（通过队列）
     // 注意：如果MQTT已经连接（可能在on_wifi_status回调中已连接），则跳过
     if (wifi_manager_is_connected() && !mqtt_client_is_connected()) {
         ESP_LOGI(TAG, "WiFi already connected, checking for saved MQTT config...");
@@ -753,6 +808,7 @@ void app_main(void)
         ESP_LOGI(TAG, "WiFi and MQTT already connected, skipping auto-connect");
     }
 
+    // 14. 输出系统就绪信息
     ESP_LOGI(TAG, "========================================");
     ESP_LOGI(TAG, "System ready!");
     
