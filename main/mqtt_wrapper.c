@@ -246,15 +246,14 @@ esp_err_t mqtt_client_connect(void)
     char client_id[64];
     get_client_id(client_id, sizeof(client_id));
     
-    // 增加缓冲区大小以避免截断警告
+    // 使用 WebSocket 连接（与客户端配置一致：端口 8083，路径 /mqtt）
     char uri[512];
     int uri_len;
     if (s_sn[0] != '\0') {
-        // 使用 SN 作为 username 和 password
-        uri_len = snprintf(uri, sizeof(uri), "mqtt://%s:%s@%s:%d",
+        uri_len = snprintf(uri, sizeof(uri), "ws://%s:%s@%s:%d/mqtt",
                           s_sn, s_sn, s_config.broker, s_config.port);
     } else {
-        uri_len = snprintf(uri, sizeof(uri), "mqtt://%s:%d",
+        uri_len = snprintf(uri, sizeof(uri), "ws://%s:%d/mqtt",
                           s_config.broker, s_config.port);
     }
     
