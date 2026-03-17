@@ -593,7 +593,7 @@ static void process_mqtt_config(const char *config_json)
     if (item && cJSON_IsString(item) && strlen(item->valuestring) > 0) {
         strncpy(mqtt_cfg.broker, item->valuestring, sizeof(mqtt_cfg.broker) - 1);
     } else {
-        strncpy(mqtt_cfg.broker, "192.168.3.196", sizeof(mqtt_cfg.broker) - 1);  // 默认 host
+        strncpy(mqtt_cfg.broker, "192.168.3.214", sizeof(mqtt_cfg.broker) - 1);  // 默认 host
     }
     
     item = cJSON_GetObjectItem(json, "port");
