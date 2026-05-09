@@ -1,23 +1,21 @@
 {
   "C_Cpp.intelliSenseEngine": "default",
-  "idf.espIdfPathWin": "C:\\Users\\942.AD\\esp\\v5.2.2\\esp-idf",
-  "idf.pythonInstallPath": "C:\\Users\\942.AD\\.espressif\\tools\\idf-python\\3.11.2\\python.exe",
+  "idf.espIdfPathWin": "C:\\esp\\v6.0.1\\esp-idf",
+  "idf.pythonInstallPath": "C:\\Users\\13060\\.espressif\\python_env\\idf6.0_py3.14_env\\Scripts\\python.exe",
   "idf.openOcdConfigs": [
     "board/esp32c3-builtin.cfg"
   ],
-  "idf.portWin": "COM7",
-  "idf.toolsPathWin": "C:\\Users\\942.AD\\.espressif",
+  "idf.portWin": "COM4",
+  "idf.toolsPathWin": "C:\\Users\\13060\\.espressif",
   "idf.customExtraVars": {
     "IDF_TARGET": "esp32c3"
   },
-  "clangd.path": "C:\\Users\\942.AD\\.espressif\\tools\\esp-clang\\16.0.1-fe4f10a809\\esp-clang\\bin\\clangd.exe",
+  "clangd.path": "C:\\Users\\13060\\.espressif\\tools\\esp-clang\\16.0.1-fe4f10a809\\esp-clang\\bin\\clangd.exe",
   "clangd.arguments": [
     "--background-index",
-    "--query-driver=C:\\Users\\942.AD\\.espressif\\tools\\riscv32-esp-elf\\esp-13.2.0_20230928\\riscv32-esp-elf\\bin\\riscv32-esp-elf-gcc.exe",
+    "--query-driver=C:\\Espressif\\tools\\riscv32-esp-elf\\esp-15.2.0_20251204\\riscv32-esp-elf\\bin\\riscv32-esp-elf-gcc.exe",
     "--compile-commands-dir=${workspaceFolder}\\build"
   ],
-  "idf.monitorPort": "/dev/tty.usbmodem5ABA0873661",
   "idf.flashType": "UART",
-  "idf.currentSetup": "/Users/jaspercheng/.espressif/v5.5.2/esp-idf",
-  "idf.port": "/dev/tty.usbmodem5ABA0873661"
+  "idf.currentSetup": "C:\\esp\\v6.0.1\\esp-idf"
 }

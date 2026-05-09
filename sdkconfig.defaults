@@ -1,3 +1,11 @@
+# Use project partitions.csv — default "1MB factory" is too small for BLE+WiFi+MQTT (~1.5MB+).
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# Most ESP32-C3 devkits/modules use 4MB flash; keeps partition check consistent with larger factory slot.
+# If your chip is 2MB only, set CONFIG_ESPTOOLPY_FLASHSIZE_2MB=y in menuconfig (factory in partitions.csv fits).
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
 CONFIG_ESP_SYSTEM_EVENT_TASK_STACK_SIZE=4096
 

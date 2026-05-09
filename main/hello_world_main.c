@@ -269,7 +269,7 @@ static void send_mqtt_config_message(void)
             if (port && cJSON_IsNumber(port)) {
                 cJSON_AddNumberToObject(json, "mqtt_port", port->valueint);
             } else {
-                cJSON_AddNumberToObject(json, "mqtt_port", 8083);  // 默认端口
+                cJSON_AddNumberToObject(json, "mqtt_port", 443);  // 默认端口
             }
             cJSON_Delete(mqtt_json);
         }
@@ -593,14 +593,14 @@ static void process_mqtt_config(const char *config_json)
     if (item && cJSON_IsString(item) && strlen(item->valuestring) > 0) {
         strncpy(mqtt_cfg.broker, item->valuestring, sizeof(mqtt_cfg.broker) - 1);
     } else {
-        strncpy(mqtt_cfg.broker, "192.168.3.214", sizeof(mqtt_cfg.broker) - 1);  // 默认 host
+        strncpy(mqtt_cfg.broker, "4a48eac5.r12.cpolar.top", sizeof(mqtt_cfg.broker) - 1);  // 默认 host
     }
     
     item = cJSON_GetObjectItem(json, "port");
     if (item && cJSON_IsNumber(item)) {
         mqtt_cfg.port = item->valueint;
     } else {
-        mqtt_cfg.port = 8083;  // 默认端口
+        mqtt_cfg.port = 443;  // 默认端口 (wss)
     }
     
     // username、password、client_id 不需要配置
@@ -848,7 +848,7 @@ void app_main(void)
             if (port && cJSON_IsNumber(port)) {
                 ESP_LOGI(TAG, "  Port: %d", port->valueint);
             } else {
-                ESP_LOGI(TAG, "  Port: 8083 (default)");
+                ESP_LOGI(TAG, "  Port: 443 (default)");
             }
             cJSON_Delete(json);
         } else {

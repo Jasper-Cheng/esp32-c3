@@ -13,6 +13,7 @@
 #include "esp_log.h"
 #include "esp_wifi.h"
 #include "mqtt_client.h"  // ESP-IDF的MQTT客户端头文件（通过mqtt组件提供）
+#include "esp_crt_bundle.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include <string.h>
@@ -216,7 +217,7 @@ esp_err_t mqtt_client_set_config(const mqtt_config_t *config)
     
     // 设置默认值
     if (s_config.port == 0) {
-        s_config.port = 8083;
+        s_config.port = 443;
     }
     
     s_configured = true;
@@ -246,15 +247,16 @@ esp_err_t mqtt_client_connect(void)
     char client_id[64];
     get_client_id(client_id, sizeof(client_id));
     
-    // 使用 WebSocket 连接（与客户端配置一致：端口 8083，路径 /mqtt）
+    // WebSocket: 443 使用 wss://（TLS），其它端口沿用 ws://
+    const char *ws_scheme = (s_config.port == 443) ? "wss" : "ws";
     char uri[512];
     int uri_len;
     if (s_sn[0] != '\0') {
-        uri_len = snprintf(uri, sizeof(uri), "ws://%s:%s@%s:%d/mqtt",
-                          s_sn, s_sn, s_config.broker, s_config.port);
+        uri_len = snprintf(uri, sizeof(uri), "%s://%s:%s@%s:%d/mqtt",
+                          ws_scheme, s_sn, s_sn, s_config.broker, s_config.port);
     } else {
-        uri_len = snprintf(uri, sizeof(uri), "ws://%s:%d/mqtt",
-                          s_config.broker, s_config.port);
+        uri_len = snprintf(uri, sizeof(uri), "%s://%s:%d/mqtt",
+                          ws_scheme, s_config.broker, s_config.port);
     }
     
     if (uri_len < 0 || uri_len >= sizeof(uri)) {
@@ -270,6 +272,9 @@ esp_err_t mqtt_client_connect(void)
     // 配置基本连接参数
     mqtt_cfg.broker.address.uri = uri;
     mqtt_cfg.credentials.client_id = client_id;
+    if (s_config.port == 443) {
+        mqtt_cfg.broker.verification.crt_bundle_attach = esp_crt_bundle_attach;
+    }
     // 缩短keepalive时间，让LWT更快触发（30秒，服务器会在约45秒后触发LWT）
     mqtt_cfg.session.keepalive = 30;
     mqtt_cfg.session.disable_clean_session = false;

@@ -1,5 +1,6 @@
 # Name,   Type, SubType, Offset,  Size, Flags
 # Note: if you have increased the bootloader size, make sure to update the offsets to avoid overlap
+# factory max on 2MB flash: 0x10000 .. 0x200000-1 => size 0x1F0000 (do not use 0x200000 or end exceeds chip)
 nvs,      data, nvs,     0x9000,  0x6000,
 phy_init, data, phy,     0xf000,  0x1000,
 factory,  app,  factory, 0x10000, 0x1F0000,
